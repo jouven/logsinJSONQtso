@@ -73,7 +73,7 @@ CONFIG(debug, debug|release){
 
 }
 
-LIBS += -lcriptoQtso -lbaseClassQtso
+LIBS += -lcriptoQtso -lbaseClassQtso -lessentialQtso
 
 QMAKE_CXXFLAGS_DEBUG -= -g
 QMAKE_CXXFLAGS_DEBUG += -pedantic -Wall -Wextra -g3
