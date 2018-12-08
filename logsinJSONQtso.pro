@@ -57,6 +57,7 @@ CONFIG(debug, debug|release){
 }
 
 if (android){
+#release
 CONFIG(release, debug|release){
     LIBS += -L$${MYPATH}home/jouven/mylibsAndroid/release/
     DEPENDPATH += $${MYPATH}home/jouven/mylibsAndroid/release
