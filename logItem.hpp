@@ -1,10 +1,12 @@
 
-#ifndef LOGQTSO_LOG_HPP
-#define LOGQTSO_LOG_HPP
+#ifndef LOGSINJSONQTSO_LOG_HPP
+#define LOGSINJSONQTSO_LOG_HPP
+
+#include "crossPlatformMacros.hpp"
 
 #include <QString>
 
-class logItem_c
+class EXPIMP_LOGSINJSONQTSO logItem_c
 {
     QString message_pri;
 public:
@@ -50,4 +52,4 @@ public:
     int_fast32_t sourceLineNumber_f() const;
 };
 
-#endif // LOGQTSO_LOG_HPP
+#endif // LOGSINJSONQTSO_LOG_HPP

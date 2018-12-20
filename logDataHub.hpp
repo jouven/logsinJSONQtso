@@ -17,11 +17,12 @@
 //AKA inserting logs from different threads is fine,
 //everything else... probably not
 
-#ifndef LOGQTSO_LOGDATAHUB_HPP
-#define LOGQTSO_LOGDATAHUB_HPP
+#ifndef LOGSINJSONQTSO_LOGDATAHUB_HPP
+#define LOGSINJSONQTSO_LOGDATAHUB_HPP
 
 #include "baseClassQtso/baseClassQt.hpp"
 #include "logItem.hpp"
+#include "crossPlatformMacros.hpp"
 
 #include <QString>
 #include <QDateTime>
@@ -38,7 +39,7 @@
 #define MACRO_FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 #define MACRO_ADDMESSAGE(VAR, MESSAGE, TYPE) VAR.addMessage_f(MESSAGE, TYPE, MACRO_FILENAME, __func__, __LINE__)
 
-class logFilter_c
+class EXPIMP_LOGSINJSONQTSO logFilter_c
 {
     QString messageContains_pri;
     bool messageContainsSet_pri = false;
@@ -89,7 +90,7 @@ public:
 };
 
 
-class logDataHub_c : public QObject, public eines::baseClassQt_c
+class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public eines::baseClassQt_c
 {
     Q_OBJECT
 
@@ -190,7 +191,7 @@ class logDataHub_c : public QObject, public eines::baseClassQt_c
             , const QString& sourceFunction_par_con
     ) const;
 public:
-    logDataHub_c() = default;
+    logDataHub_c();
 
     //returns true if the message was inserted
     //still will "append" an error if
@@ -295,9 +296,9 @@ public:
 
 Q_SIGNALS:
     //using an int because map size is as int
-    void messageAdded_signal(const int index_par_con, const logItem_c* const logItem_par_con, const QDateTime* const datetime_par_con);
+    void messageAdded_signal(const int index_par_con, const logItem_c* logItem_par_con, const QDateTime* datetime_par_con);
     //emmited when clearLogs is called
     void clearLogs_signal();
 };
 
-#endif // LOGQTSO_LOGDATAHUB_HPP
+#endif // LOGSINJSONQTSO_LOGDATAHUB_HPP

@@ -2,7 +2,7 @@
 
 #include "logItemStrMapping.hpp"
 
-#include "criptoQtso/hashQt.hpp"
+#include "cryptoQtso/hashQt.hpp"
 #include "essentialQtso/essentialQt.hpp"
 
 #include <QJsonArray>
@@ -356,6 +356,9 @@ bool logDataHub_c::loadLogFiles_f(
         {
             pathNameTmp = logPathBaseName_par_con;
         }
+#ifdef DEBUGJOUVEN
+        //qtOutRef_ext() << "pathNameTmp " << pathNameTmp << endl;
+#endif
 
         QFileInfo fileInfoTmp(pathNameTmp);
         //single file case
@@ -747,6 +750,11 @@ bool logDataHub_c::filterMatch_f(
     }
 
     return resultTmp;
+}
+
+logDataHub_c::logDataHub_c()
+{
+    qRegisterMetaType<const logItem_c*>("const logItem_c*");
 }
 
 void logDataHub_c::read_f(
