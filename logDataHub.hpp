@@ -164,10 +164,10 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public eines::baseCla
     bool addMessageInternal_f(
             const QString& message_par_con
             , const logItem_c::type_ec type_par_con
-            , const QDateTime& datetime_par_con
             , const QString& sourceFile_par_con
             , const QString& sourceFunction_par_con
             , const int_fast32_t sourceLineNumber_par_con
+            , const QDateTime& dateTime_par_con = QDateTime()
     );
 
     void write_f(QJsonObject& json_par) const;

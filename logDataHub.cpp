@@ -152,10 +152,10 @@ void logDataHub_c::setLogTypesToSaveFile_f(const std::unordered_set<logItem_c::t
 bool logDataHub_c::addMessageInternal_f(
         const QString& message_par_con
         , const logItem_c::type_ec type_par_con
-        , const QDateTime& datetime_par_con
         , const QString& sourceFile_par_con
         , const QString& sourceFunction_par_con
         , const int_fast32_t sourceLineNumber_par_con
+        , const QDateTime& dateTime_par_con
 )
 {
     bool resultTmp(false);
@@ -167,7 +167,21 @@ bool logDataHub_c::addMessageInternal_f(
             break;
         }
 
+        //IMPORTANT if the datetime variable creation happens before the mutex, more than one log entries to be added
+        //can get the same datetime, which spells disaster dealing with index calculation,
+        //because the second time the same datetime is "added" (it won't, it will be updated on the QMap)
+        //the index calculation will return an already used one, which will mess any log array/table/lists
+        //trying to add the same index again.
+        //The issue boils down to multiple threads being able to get the same datetime, but that's not
+        //a case that this logging class/algorithm can't deal with so geting the datetime after
+        //locking the mutex solves this, but if someday in the FAR future comp speeds become really fast
+        //and datetime doesn't get more data "resolution" this might be a problem
+        //but I don't think this will be a problem since there is storage access happening
+        //WARNING this can still fail when loading logs from a file if the file is rigged to have
+        //more than one try with the same datetime
+        //but a log file created by this class can't be like this
         QMutexLocker lockerTmp(&addMessageMutex_pri);
+        const QDateTime currentDateTimeTmp(dateTime_par_con.isNull() ? QDateTime::currentDateTimeUtc() : dateTime_par_con);
 
         bool maxMessagesReachedTmp(dateTimeToLogItemPtrMap_pri.size() >= maxMessages_pri);
         bool maxUniqueMessagesReachedTmp(uniqueMessageCount_f() >= maxUniqueMessages_pri);
@@ -211,7 +225,7 @@ bool logDataHub_c::addMessageInternal_f(
         {
             qtOutRef_ext() << "\nMessage: " << message_par_con << '\n'
                       << "Type: " << typeStrTmp << '\n'
-                      << "DateTime: " << datetime_par_con.toLocalTime().toString("yyyy-MM-dd hh:mm:ss.zzz") << '\n'
+                      << "DateTime: " << currentDateTimeTmp.toLocalTime().toString("yyyy-MM-dd hh:mm:ss.zzz") << '\n'
                       << "Source file: " << sourceFile_par_con << '\n'
                       << "Source function: " << sourceFunction_par_con << '\n'
                       << "Source line number: " << sourceLineNumber_par_con;
@@ -262,32 +276,31 @@ bool logDataHub_c::addMessageInternal_f(
             logItemPtrTmp = std::addressof(messageSizeUMap_hashElementUMap_pri.at(messageSizeTmp).at(hashResultTmp));
         }
 
-        QMap<QDateTime, logItem_c*>::iterator dateTimeToLogItemPtrMapIteratorTmp(dateTimeToLogItemPtrMap_pri.insert(datetime_par_con, logItemPtrTmp));
+        QMap<QDateTime, logItem_c*>::iterator dateTimeToLogItemPtrMapIteratorTmp(dateTimeToLogItemPtrMap_pri.insert(currentDateTimeTmp, logItemPtrTmp));
         resultTmp = true;
 
         int indexTmp(0);
-        if (dateTimeToLogItemPtrMap_pri.isEmpty())
+        while (true)
         {
-        }
-        else
-        {
-            while (true)
+            //use 0/first index
+            if (dateTimeToLogItemPtrMap_pri.firstKey() > currentDateTimeTmp)
             {
-                if (dateTimeToLogItemPtrMap_pri.firstKey() > datetime_par_con)
-                {
-                    break;
-                }
-
-                if (dateTimeToLogItemPtrMap_pri.lastKey() < datetime_par_con)
-                {
-                    indexTmp = dateTimeToLogItemPtrMap_pri.size();
-                    break;
-                }
-
-                indexTmp = std::distance(dateTimeToLogItemPtrMap_pri.begin(), dateTimeToLogItemPtrMapIteratorTmp);
                 break;
             }
+            //use the size/last index+1
+            if (dateTimeToLogItemPtrMap_pri.lastKey() < currentDateTimeTmp)
+            {
+                indexTmp = dateTimeToLogItemPtrMap_pri.size();
+                break;
+            }
+            //get the index using distance to the iterator
+            indexTmp = std::distance(dateTimeToLogItemPtrMap_pri.begin(), dateTimeToLogItemPtrMapIteratorTmp);
+            break;
         }
+#ifdef DEBUGJOUVEN
+        //QOUT_TS("indexTmp " << QString::number(indexTmp) << endl);
+#endif
+
         Q_EMIT messageAdded_signal(indexTmp, logItemPtrTmp, std::addressof(dateTimeToLogItemPtrMapIteratorTmp.key()));
 
         if (saveLogFiles_pri and isValidLogPathBaseName_pri and logTypesToSaveFile_pri.count(type_par_con) == 1)
@@ -318,7 +331,6 @@ bool logDataHub_c::addMessageInternal_f(
                 }
             }
         }
-
         break;
     }
     return resultTmp;
@@ -601,7 +613,6 @@ bool logDataHub_c::addMessage_f(
         (
                     message_par_con
                     , type_par_con
-                    , QDateTime::currentDateTimeUtc()
                     , sourceFile_par_con
                     , sourceFunction_par_con
                     , sourceLineNumber_par_con
@@ -790,7 +801,7 @@ void logDataHub_c::read_f(
                 )
             )
         {
-            addMessageInternal_f(messageTmp, typeTmp, datetimeTmp, sourceFileTmp, sourceFunctionTmp, sourceLineNumberTmp);
+            addMessageInternal_f(messageTmp, typeTmp, sourceFileTmp, sourceFunctionTmp, sourceLineNumberTmp, datetimeTmp);
         }
     }
     saveLogFiles_pri = saveLogFilesValueTmp;
