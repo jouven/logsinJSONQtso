@@ -21,13 +21,15 @@ public:
 private:
     type_ec type_pri = type_ec::empty;
 
-    //save always in UTC, show on UTC or local
+    //DON'T USE THIS,
+    //it makes log entries in different indexes have the same time
     //QDateTime datetime_pri;
 
     QString sourceFileName_pri;
     QString sourceFunctionName_pri;
     int_fast32_t sourceLineNumber_pri = 0;
 
+    QString threadId_pri;
 //    void read_f(const QJsonObject& json_par_con);
 public:
     logItem_c() = default;
@@ -39,6 +41,7 @@ public:
             , const QString& sourceFileName_par_con
             , const QString& sourceFunctionName_par_con
             , const int_fast32_t sourceLineNumber_par_con
+            , const QString& threadId_par_con = QString()
     );
 
   //  void write_f(QJsonObject& json_par) const;
@@ -50,6 +53,7 @@ public:
     QString sourceFileName_f() const;
     QString sourceFunctionName_f() const;
     int_fast32_t sourceLineNumber_f() const;
+    QString threadId_f() const;
 };
 
 #endif // LOGSINJSONQTSO_LOG_HPP

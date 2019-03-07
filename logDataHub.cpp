@@ -7,9 +7,11 @@
 
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QFile>
 #include <QFileInfo>
 #include <QDir>
+#include <QVector>
+#include <QThread>
+
 //#include <QCollator>
 
 uint_fast64_t logDataHub_c::maxMessages_f() const
@@ -46,7 +48,7 @@ void logDataHub_c::setMaxUniqueMessages_f(const uint_fast64_t& maxUniqueMessages
 
 uint_fast64_t logDataHub_c::messageCount_f() const
 {
-    return dateTimeToLogItemPtrMap_pri.size();
+    return indexToLogItemPtrAndDatetimeMap_pri.size();
 }
 
 uint_fast64_t logDataHub_c::uniqueMessageCount_f() const
@@ -149,6 +151,26 @@ void logDataHub_c::setLogTypesToSaveFile_f(const std::unordered_set<logItem_c::t
     logTypesToSaveFile_pri = logTypesToSaveFile_par_con;
 }
 
+bool logDataHub_c::fileSaveLogTypeText_f() const
+{
+    return fileSaveLogTypeText_pri;
+}
+
+void logDataHub_c::setFileSaveLogTypeText_f(const bool fileSaveLogTypeText_par_con)
+{
+    fileSaveLogTypeText_pri = fileSaveLogTypeText_par_con;
+}
+
+void logDataHub_c::stopFlushTimer_f()
+{
+    saveFileFlushDebounce_pri.stop();
+}
+
+void logDataHub_c::startFlushTimer_f()
+{
+    saveFileFlushDebounce_pri.start();
+}
+
 bool logDataHub_c::addMessageInternal_f(
         const QString& message_par_con
         , const logItem_c::type_ec type_par_con
@@ -156,7 +178,7 @@ bool logDataHub_c::addMessageInternal_f(
         , const QString& sourceFunction_par_con
         , const int_fast32_t sourceLineNumber_par_con
         , const QDateTime& dateTime_par_con
-)
+        , const QString& threadId_par_con)
 {
     bool resultTmp(false);
     while (true)
@@ -166,6 +188,12 @@ bool logDataHub_c::addMessageInternal_f(
             appendError_f("Empy message");
             break;
         }
+
+        //UPDATE after creating the regular, log per text line when saving into a file feature, which is way faster than JSON,
+        //tho keeping the save file open helps too, which I didn't previously, still many log entries can get the same datetime
+        //and the mutex locker isn't slow enough to make a millisecond difference, even on debug.
+        //As I explained before below how do you deal with multiple logs with the same datetimes?
+        //which goes first or later when writing the log file? So, my solution is... add the thread name into the logs too for context
 
         //IMPORTANT if the datetime variable creation happens before the mutex, more than one log entries to be added
         //can get the same datetime, which spells disaster dealing with index calculation,
@@ -180,12 +208,20 @@ bool logDataHub_c::addMessageInternal_f(
         //WARNING this can still fail when loading logs from a file if the file is rigged to have
         //more than one try with the same datetime
         //but a log file created by this class can't be like this
-        QMutexLocker lockerTmp(&addMessageMutex_pri);
         const QDateTime currentDateTimeTmp(dateTime_par_con.isNull() ? QDateTime::currentDateTimeUtc() : dateTime_par_con);
 
-        bool maxMessagesReachedTmp(dateTimeToLogItemPtrMap_pri.size() >= maxMessages_pri);
+        QMutexLocker lockerTmp(&addMessageMutex_pri);
+        bool maxMessagesReachedTmp(indexToLogItemPtrAndDatetimeMap_pri.size() >= maxMessages_pri);
         bool maxUniqueMessagesReachedTmp(uniqueMessageCount_f() >= maxUniqueMessages_pri);
         bool maxLogFileSizeReachedTmp(false);
+
+        QString threadIdTmp(threadId_par_con.isNull() ? QThread::currentThread()->objectName() : threadId_par_con);
+        if (threadIdTmp.isEmpty())
+        {
+            threadIdTmp = "main";
+        }
+
+        logIndex_pri = logIndex_pri + 1;
 
         if (saveLogFiles_pri)
         {
@@ -244,7 +280,7 @@ bool logDataHub_c::addMessageInternal_f(
         logItem_c* logItemPtrTmp(nullptr);
 
         //search for a the message size
-        int_fast64_t messageSizeTmp(message_par_con.size() + typeStrTmp.size());
+        int_fast64_t messageSizeTmp(messageToHashTmp.size());
         std::unordered_map<int_fast64_t, std::unordered_map<uint_fast64_t, logItem_c>>::iterator findSizeResultTmp(messageSizeUMap_hashElementUMap_pri.find(messageSizeTmp));
         if (findSizeResultTmp not_eq messageSizeUMap_hashElementUMap_pri.end())
         {
@@ -261,7 +297,14 @@ bool logDataHub_c::addMessageInternal_f(
             else
             {
                 std::pair<std::unordered_map<uint_fast64_t, logItem_c>::iterator, bool> emplaceResultTmp(
-                            findSizeResultTmp->second.emplace(hashResultTmp, logItem_c(message_par_con, type_par_con, sourceFile_par_con, sourceFunction_par_con, sourceLineNumber_par_con))
+                            findSizeResultTmp->second.emplace(hashResultTmp, logItem_c(
+                                                                  message_par_con
+                                                                  , type_par_con
+                                                                  , sourceFile_par_con
+                                                                  , sourceFunction_par_con
+                                                                  , sourceLineNumber_par_con
+                                                                  , threadIdTmp
+                                                                  ))
                 );
                 logItemPtrTmp = std::addressof(emplaceResultTmp.first->second);
             }
@@ -270,66 +313,131 @@ bool logDataHub_c::addMessageInternal_f(
         {
             std::unordered_map<uint_fast64_t, logItem_c> hashElementUMapTmp;
             //std::pair<std::unordered_map<uint_fast64_t, logItem_c>::iterator, bool> emplaceResultTmp(
-                        hashElementUMapTmp.emplace(hashResultTmp, logItem_c(message_par_con, type_par_con, sourceFile_par_con, sourceFunction_par_con, sourceLineNumber_par_con));
+                        hashElementUMapTmp.emplace(hashResultTmp, logItem_c(
+                                                       message_par_con
+                                                       , type_par_con
+                                                       , sourceFile_par_con
+                                                       , sourceFunction_par_con
+                                                       , sourceLineNumber_par_con
+                                                       , threadIdTmp
+                        ));
             //);
             messageSizeUMap_hashElementUMap_pri.emplace(messageSizeTmp, hashElementUMapTmp);
             logItemPtrTmp = std::addressof(messageSizeUMap_hashElementUMap_pri.at(messageSizeTmp).at(hashResultTmp));
         }
 
-        QMap<QDateTime, logItem_c*>::iterator dateTimeToLogItemPtrMapIteratorTmp(dateTimeToLogItemPtrMap_pri.insert(currentDateTimeTmp, logItemPtrTmp));
+        QMap<int_fast64_t, std::pair<logItem_c*, QDateTime>>::iterator dateTimeToLogItemPtrMapIteratorTmp(
+                    indexToLogItemPtrAndDatetimeMap_pri.insert(logIndex_pri, {logItemPtrTmp, currentDateTimeTmp})
+        );
         resultTmp = true;
 
-        int indexTmp(0);
-        while (true)
-        {
-            //use 0/first index
-            if (dateTimeToLogItemPtrMap_pri.firstKey() > currentDateTimeTmp)
-            {
-                break;
-            }
-            //use the size/last index+1
-            if (dateTimeToLogItemPtrMap_pri.lastKey() < currentDateTimeTmp)
-            {
-                indexTmp = dateTimeToLogItemPtrMap_pri.size();
-                break;
-            }
-            //get the index using distance to the iterator
-            indexTmp = std::distance(dateTimeToLogItemPtrMap_pri.begin(), dateTimeToLogItemPtrMapIteratorTmp);
-            break;
-        }
+
+//        //use a counter that's initialized when the class is ctored?
+//        //and ignore this below
+//        int indexTmp(0);
+//        while (true)
+//        {
+//            //use 0/first index
+//            if (dateTimeToLogItemPtrMap_pri.firstKey() > currentDateTimeTmp)
+//            {
+//                break;
+//            }
+//            //use the size/last index+1
+//            if (dateTimeToLogItemPtrMap_pri.lastKey() <= currentDateTimeTmp)
+//            {
+//                indexTmp = dateTimeToLogItemPtrMap_pri.size();
+//                break;
+//            }
+//            //get the index using distance to the iterator
+//            indexTmp = std::distance(dateTimeToLogItemPtrMap_pri.begin(), dateTimeToLogItemPtrMapIteratorTmp);
+//            break;
+//        }
 #ifdef DEBUGJOUVEN
-        //QOUT_TS("indexTmp " << QString::number(indexTmp) << endl);
+        //QOUT_TS("logIndex_pri " << QString::number(logIndex_pri) << endl);
 #endif
 
-        Q_EMIT messageAdded_signal(indexTmp, logItemPtrTmp, std::addressof(dateTimeToLogItemPtrMapIteratorTmp.key()));
+        Q_EMIT messageAdded_signal(logIndex_pri, logItemPtrTmp, std::addressof(dateTimeToLogItemPtrMapIteratorTmp.value().second));
 
         if (saveLogFiles_pri and isValidLogPathBaseName_pri and logTypesToSaveFile_pri.count(type_par_con) == 1)
         {
-            QFile logFileTmp(currentLogFileName_pri);
-            if (logFileTmp.size() >= maxLogFileByteSize_pri)
+            if (logFile_pri.fileName().isEmpty())
+            {
+                logFile_pri.setFileName(currentLogFileName_pri);
+            }
+            else
+            {
+
+            }
+
+            if (logFile_pri.size() >= maxLogFileByteSize_pri)
             {
                 currentLogFileName_pri = getNextFilePath_f(); //logSaveDirectoryPath_pri + "/" + generateNewLogFileName_f();
-                logFileTmp.setFileName(currentLogFileName_pri);
+                logFile_pri.setFileName(currentLogFileName_pri);
                 startLogIteratorToSave_pri = dateTimeToLogItemPtrMapIteratorTmp;
                 startLogIteratorToSaveSet_pri = true;
             }
 
-            if (logFileTmp.open(QIODevice::WriteOnly))
+            if (logFile_pri.isOpen())
+            {
+            }
+            else
+            {
+                bool openErrorTmp(false);
+                if (fileSaveLogTypeText_f())
+                {
+                    if (logFile_pri.open(QIODevice::Append))
+                    {
+                    }
+                    else
+                    {
+                        openErrorTmp = true;
+                    }
+                }
+                else
+                {
+                    if (logFile_pri.open(QIODevice::WriteOnly))
+                    {
+                    }
+                    else
+                    {
+                        openErrorTmp = true;
+                    }
+                }
+                if (openErrorTmp)
+                {
+                    QString errorMsgTmp("\nCould not save log entry, file " + logFile_pri.fileName() + " could not be opened");
+                    appendError_f(errorMsgTmp);
+                    if (echoStderrOnError_pri)
+                    {
+                        qtErrRef_ext() << errorMsgTmp;
+                    }
+                    break;
+                }
+            }
+
+            if (fileSaveLogTypeText_f())
+            {
+                QString lineTmp(generateTextLine_f(logItemPtrTmp, currentDateTimeTmp));
+                lineTmp.append('\n');
+                logFile_pri.write(lineTmp.toUtf8());
+            }
+            else
             {
                 QJsonObject jsonToSaveTmp;
                 write_f(jsonToSaveTmp);
                 QJsonDocument somethingJsonD(jsonToSaveTmp);
-                logFileTmp.write(somethingJsonD.toJson(QJsonDocument::Indented));
+
+                QByteArray jsonByteArrayTmp(somethingJsonD.toJson(QJsonDocument::Indented));
+                logFile_pri.resize(jsonByteArrayTmp.size());
+                logFile_pri.reset();
+                logFile_pri.write(jsonByteArrayTmp);
             }
-            else
-            {
-                QString errorMsgTmp("\nCould not save log entry, file " + logFileTmp.fileName() + " could not be opened");
-                appendError_f(errorMsgTmp);
-                if (echoStderrOnError_pri)
-                {
-                    qtErrRef_ext() << errorMsgTmp;
-                }
-            }
+
+            //this will debounce the flush if many logs are inserted close to each other time-wise
+            Q_EMIT stopFlushTimer_signal();
+            Q_EMIT startFlushTimer_signal();
+            //saveFileFlushDebounce_pri.stop();
+            //saveFileFlushDebounce_pri.start();
         }
         break;
     }
@@ -353,7 +461,7 @@ bool logDataHub_c::loadLogFiles_f(
         , const bool keepUsingLastLogFile_par_con)
 {
     bool resultTmp(false);
-    auto currentSizeTmp(dateTimeToLogItemPtrMap_pri.size());
+    auto currentSizeTmp(indexToLogItemPtrAndDatetimeMap_pri.size());
     while (true)
     {
         QString pathNameTmp;
@@ -436,7 +544,7 @@ bool logDataHub_c::loadLogFiles_f(
         }
         break;
     }
-    auto newSizeTmp(dateTimeToLogItemPtrMap_pri.size());
+    auto newSizeTmp(indexToLogItemPtrAndDatetimeMap_pri.size());
     resultTmp = newSizeTmp > currentSizeTmp;
     return resultTmp;
 }
@@ -450,6 +558,18 @@ void logDataHub_c::setSaveLogFiles_f(const bool saveLogFiles_par_con)
 {
     QMutexLocker lockerTmp(&addMessageMutex_pri);
     saveLogFiles_pri = saveLogFiles_par_con;
+    if (saveLogFiles_pri)
+    {
+    }
+    else
+    {
+        //when disabling the log file save
+        //close the file
+        if (logFile_pri.isOpen())
+        {
+            logFile_pri.close();
+        }
+    }
 }
 
 QString logDataHub_c::logPathBaseName_f() const
@@ -492,17 +612,44 @@ bool logDataHub_c::readLogFile_f(
     while (true)
     {
         QFile fileTmp(path_par_con);
+        if (fileTmp.size() == 0)
+        {
+            resultTmp = true;
+            break;
+        }
         if (not fileTmp.open(QIODevice::ReadOnly))
         {
             break;
         }
-        QByteArray jsonByteArrayTmp(fileTmp.readAll());
-        QJsonDocument jsonDocObjTmp(QJsonDocument::fromJson(jsonByteArrayTmp));
-        if (jsonDocObjTmp.isNull())
+        QByteArray byteArrayTmp(fileTmp.readAll());
+        if (fileSaveLogTypeText_pri)
         {
-            break;
+            QList<QByteArray> linesTmp(byteArrayTmp.split('\n'));
+            bool saveLogFilesValueTmp(saveLogFiles_pri);
+            //disable saving while reading from a json file
+            saveLogFiles_pri = false;
+            for (const QByteArray& lineTmp_ite_con : linesTmp)
+            {
+                if (readTextLine_f(lineTmp_ite_con, logFilter_par_con))
+                {
+                }
+                else
+                {
+                    break;
+                }
+            }
+            saveLogFiles_pri = saveLogFilesValueTmp;
         }
-        read_f(jsonDocObjTmp.object(), logFilter_par_con);
+        else
+        {
+            QJsonDocument jsonDocObjTmp(QJsonDocument::fromJson(byteArrayTmp));
+            if (jsonDocObjTmp.isNull())
+            {
+                break;
+            }
+            readLogsFromJsonObject_f(jsonDocObjTmp.object(), logFilter_par_con);
+        }
+
         resultTmp = true;
         break;
     }
@@ -631,14 +778,204 @@ bool logDataHub_c::echoToStdoutOnAddMessage_f() const
     return echoStdoutOnAddMessage_pri;
 }
 
+//field order 0DateTime 1threadId 2Type 3File 4Function 5Line 6Message
+//doesn't include newline at the end
+QString logDataHub_c::generateTextLine_f(const logItem_c* logItem_par_con, const QDateTime& datetime_par_con)
+{
+    QString resultTmp;
+    resultTmp.append(datetime_par_con.toString("yyyy-MM-dd hh:mm:ss.zzz")).append('\t');
+    resultTmp.append(logItem_par_con->threadId_f()).append('\t');
+    resultTmp.append(logTypeToStrUMap_glo_sta_con.at(logItem_par_con->type_f())).append('\t');
+    resultTmp.append(logItem_par_con->sourceFileName_f()).append('\t');
+    resultTmp.append(logItem_par_con->sourceFunctionName_f()).append('\t');
+    resultTmp.append(QString::number(logItem_par_con->sourceLineNumber_f())).append('\t');
+
+    QString messageTmp(logItem_par_con->message_f());
+    //bye carriage returns
+    messageTmp.remove('\r');
+
+    std::vector<int_fast64_t> tabIndexsTmp;
+    {
+        //if there are tabs
+        int newLineCountTmp(messageTmp.count('\t'));
+        if (newLineCountTmp > 0)
+        {
+            tabIndexsTmp.reserve(newLineCountTmp);
+            int lastTabIndexTmp(messageTmp.lastIndexOf('\t'));
+            while (lastTabIndexTmp not_eq -1)
+            {
+                tabIndexsTmp.emplace_back(lastTabIndexTmp);
+                messageTmp.replace(lastTabIndexTmp, 1, "HT");
+                lastTabIndexTmp = messageTmp.lastIndexOf('\t');
+            }
+        }
+    }
+
+    std::vector<int_fast64_t> newLineIndexs;
+    {
+        //if there are new lines
+        int newLineCountTmp(messageTmp.count('\n'));
+        if (newLineCountTmp > 0)
+        {
+            newLineIndexs.reserve(newLineCountTmp);
+            int lastNewlineIndexTmp(messageTmp.lastIndexOf('\n'));
+            while (lastNewlineIndexTmp not_eq -1)
+            {
+                newLineIndexs.emplace_back(lastNewlineIndexTmp);
+                messageTmp.replace(lastNewlineIndexTmp, 1, "LF");
+                lastNewlineIndexTmp = messageTmp.lastIndexOf('\n');
+            }
+        }
+    }
+    resultTmp.append(messageTmp).append('\t');
+
+    //tabs first
+    if (tabIndexsTmp.empty())
+    {
+
+    }
+    else
+    {
+        for (const int tabPos_ite_con : tabIndexsTmp)
+        {
+            resultTmp.append(QString::number(tabPos_ite_con)).append(',');
+        }
+        //remove last comma
+        resultTmp.chop(1);
+    }
+    resultTmp.append('\t');
+
+    //newlines second
+    if (newLineIndexs.empty())
+    {
+
+    }
+    else
+    {
+        for (const int newlinePos_ite_con : newLineIndexs)
+        {
+            resultTmp.append(QString::number(newlinePos_ite_con)).append(',');
+        }
+        //remove last comma
+        resultTmp.chop(1);
+    }
+    return resultTmp;
+}
+
+bool logDataHub_c::readTextLine_f(
+        QString line_par
+        , const logFilter_c& logFilter_par_con
+)
+{
+    bool resultTmp(false);
+    while (true)
+    {
+        //bye carriage returns
+        line_par.remove('\r');
+        QStringList fieldsTmp(line_par.split('\t'));
+        //it should have 7 fields at least
+        if (fieldsTmp.size() < 7)
+        {
+            appendError_f("Less than 7 fields per log line");
+            break;
+        }
+
+        //field order 0DateTime 1threadId 2Type 3File 4Function 5Line 6Message
+
+        QString typeStrTmp(fieldsTmp.at(2));
+        logItem_c::type_ec typeTmp(strTologTypeMap_glo_sta_con.value(typeStrTmp));
+
+        QString messageTmp(fieldsTmp.at(6));
+        //IMPORTANT order, in the writeTextLine function, message "field",
+        //first the tabs are "serialized" and then the "newlines"
+        //when reading it has to be done in reverse, first the newlines and then the tabs
+
+        //add newlines
+        if (fieldsTmp.size() > 8)
+        {
+            QString newLinePositonsFieldStr(fieldsTmp.at(8));
+            QVector<QStringRef> newLinePositionsStrVectorTmp(newLinePositonsFieldStr.splitRef(','));
+            std::vector<int_fast64_t> newLinePositionsVectorTmp;
+            newLinePositionsVectorTmp.reserve(newLinePositionsStrVectorTmp.size());
+            for (const QStringRef& newlinePosStrRef_ite_con : newLinePositionsStrVectorTmp)
+            {
+                bool conversionResultTmp(false);
+                int_fast64_t conversionValueTmp(newlinePosStrRef_ite_con.toLongLong(std::addressof(conversionResultTmp)));
+                if (conversionResultTmp)
+                {
+                    newLinePositionsVectorTmp.emplace_back(conversionValueTmp);
+                }
+            }
+            for (const int_fast64_t newlinePosition_ite_con : newLinePositionsVectorTmp)
+            {
+                //newline is written as LF, 2 chars, in the log file
+                messageTmp.replace(newlinePosition_ite_con, 2, '\n');
+            }
+        }
+
+        //add tabs
+        if (fieldsTmp.size() > 7)
+        {
+            QString tabPositonsFieldStr(fieldsTmp.at(7));
+            QVector<QStringRef> tabPositionsStrVectorTmp(tabPositonsFieldStr.splitRef(','));
+            std::vector<int_fast64_t> tabPositionsVectorTmp;
+            tabPositionsVectorTmp.reserve(tabPositionsStrVectorTmp.size());
+            for (const QStringRef& tabPosStrRef_ite_con : tabPositionsStrVectorTmp)
+            {
+                bool conversionResultTmp(false);
+                int_fast64_t conversionValueTmp(tabPosStrRef_ite_con.toLongLong(std::addressof(conversionResultTmp)));
+                if (conversionResultTmp)
+                {
+                    tabPositionsVectorTmp.emplace_back(conversionValueTmp);
+                }
+            }
+            for (const int_fast64_t tabPosition_ite_con : tabPositionsVectorTmp)
+            {
+                //tab is written as HT, 2 chars, in the log file
+                messageTmp.replace(tabPosition_ite_con, 2, '\t');
+            }
+        }
+
+        QDateTime datetimeTmp(QDateTime::fromString(fieldsTmp.at(0), "yyyy-MM-dd hh:mm:ss.zzz"));
+        QString threadIdTmp(fieldsTmp.at(1));
+        datetimeTmp.setTimeSpec(Qt::UTC);
+        QString sourceFileTmp(fieldsTmp.at(3));
+        QString sourceFunctionTmp(fieldsTmp.at(4));
+        int_fast32_t sourceLineNumberTmp(fieldsTmp.at(5).toLongLong());
+
+        if (
+            filterMatch_f(
+                logFilter_par_con
+                , messageTmp
+                , typeTmp
+                , datetimeTmp
+                , sourceFileTmp
+                , sourceFunctionTmp
+                , threadIdTmp
+                )
+            )
+        {
+            addMessageInternal_f(messageTmp, typeTmp, sourceFileTmp, sourceFunctionTmp, sourceLineNumberTmp, datetimeTmp, threadIdTmp);
+            resultTmp = true;
+        }
+        break;
+    }
+    return resultTmp;
+}
+
+void logDataHub_c::flushSaveFile_f()
+{
+    logFile_pri.flush();
+}
+
 void logDataHub_c::write_f(QJsonObject& json_par) const
 {
     QJsonArray logItemArrayTmp;
-    QMap<QDateTime, logItem_c*>::ConstIterator startingIteratorTmp(startLogIteratorToSaveSet_pri ? startLogIteratorToSave_pri : dateTimeToLogItemPtrMap_pri.begin());
-    while (startingIteratorTmp not_eq dateTimeToLogItemPtrMap_pri.end())
+    QMap<int_fast64_t, std::pair<logItem_c*, QDateTime>>::ConstIterator startingIteratorTmp(startLogIteratorToSaveSet_pri ? startLogIteratorToSave_pri : indexToLogItemPtrAndDatetimeMap_pri.begin());
+    while (startingIteratorTmp not_eq indexToLogItemPtrAndDatetimeMap_pri.end())
     {
-        logItem_c* logItemPtrTmp(startingIteratorTmp.value());
-        QDateTime datetimeTmp(startingIteratorTmp.key());
+        logItem_c* logItemPtrTmp(startingIteratorTmp.value().first);
+        QDateTime datetimeTmp(startingIteratorTmp.value().second);
 
         QJsonObject jsonObjectTmp;
         jsonObjectTmp["message"] = logItemPtrTmp->message_f();
@@ -662,7 +999,7 @@ bool logDataHub_c::filterMatch_f(
         , const QDateTime& datetime_par_con
         , const QString& sourceFile_par_con
         , const QString& sourceFunction_par_con
-) const
+        , const QString& threadId_par_con) const
 {
     bool resultTmp(true);
 
@@ -757,6 +1094,20 @@ bool logDataHub_c::filterMatch_f(
             resultTmp = false;
             break;
         }
+
+        //threadId
+        if (not logFilter_par_con.threadIdContainsSet_f()
+            or threadId_par_con.contains(logFilter_par_con.threadIdContains_f())
+        )
+        {
+
+        }
+        else
+        {
+            resultTmp = false;
+            break;
+        }
+
         break;
     }
 
@@ -766,9 +1117,14 @@ bool logDataHub_c::filterMatch_f(
 logDataHub_c::logDataHub_c()
 {
     qRegisterMetaType<const logItem_c*>("const logItem_c*");
+    saveFileFlushDebounce_pri.setSingleShot(true);
+    saveFileFlushDebounce_pri.setInterval(1000);
+    QObject::connect(std::addressof(saveFileFlushDebounce_pri), &QTimer::timeout, this, &logDataHub_c::flushSaveFile_f);
+    QObject::connect(this, &logDataHub_c::startFlushTimer_signal, this, &logDataHub_c::startFlushTimer_f);
+    QObject::connect(this, &logDataHub_c::stopFlushTimer_signal, this, &logDataHub_c::stopFlushTimer_f);
 }
 
-void logDataHub_c::read_f(
+void logDataHub_c::readLogsFromJsonObject_f(
         const QJsonObject& json_par_con
         , const logFilter_c& logFilter_par_con
 )
@@ -782,6 +1138,7 @@ void logDataHub_c::read_f(
         QJsonObject actionDataJsonObject(item_ite_con.toObject());
 
         QString messageTmp(actionDataJsonObject["message"].toString());
+        QString threadIdTmp(actionDataJsonObject["threadId"].toString());
         QString typeStrTmp(actionDataJsonObject["type"].toString().toLower());
         logItem_c::type_ec typeTmp(strTologTypeMap_glo_sta_con.value(typeStrTmp));
         QDateTime datetimeTmp(QDateTime::fromString(actionDataJsonObject["datetime"].toString(), "yyyy-MM-dd hh:mm:ss.zzz"));
@@ -798,27 +1155,34 @@ void logDataHub_c::read_f(
                 , datetimeTmp
                 , sourceFileTmp
                 , sourceFunctionTmp
+                , threadIdTmp
                 )
             )
         {
-            addMessageInternal_f(messageTmp, typeTmp, sourceFileTmp, sourceFunctionTmp, sourceLineNumberTmp, datetimeTmp);
+            addMessageInternal_f(messageTmp, typeTmp, sourceFileTmp, sourceFunctionTmp, sourceLineNumberTmp, datetimeTmp, threadIdTmp);
         }
     }
     saveLogFiles_pri = saveLogFilesValueTmp;
 }
 
-std::vector<std::pair<const logItem_c* const, const QDateTime* const>> logDataHub_c::filter_f(
+std::vector<std::pair<const logItem_c* const, const QDateTime* const> > logDataHub_c::filter_f(
         const logFilter_c& logFilter_par_con
 ) const
 {
     std::vector<std::pair<const logItem_c* const, const QDateTime* const>> resultTmp;
-    //resultTmp.reserve(dateTimeToLogItemPtrMap_pri.size());
-    QMap<QDateTime, logItem_c*>::ConstIterator startingIteratorTmp(dateTimeToLogItemPtrMap_pri.cbegin());
-    while (startingIteratorTmp not_eq dateTimeToLogItemPtrMap_pri.cend())
+    if (logFilter_par_con.anythingSet_f())
     {
-        //line index begins at 1
-        logItem_c* const logItemPtrTmp(startingIteratorTmp.value());
-        const QDateTime& datetimeTmp(startingIteratorTmp.key());
+        //filtering makes the result size initially unknown
+    }
+    else
+    {
+        resultTmp.reserve(indexToLogItemPtrAndDatetimeMap_pri.size());
+    }
+    QMap<int_fast64_t, std::pair<logItem_c*, QDateTime>>::ConstIterator startingIteratorTmp(indexToLogItemPtrAndDatetimeMap_pri.cbegin());
+    while (startingIteratorTmp not_eq indexToLogItemPtrAndDatetimeMap_pri.cend())
+    {
+        logItem_c const* const logItemPtrTmp(startingIteratorTmp.value().first);
+        const QDateTime& datetimeTmp(startingIteratorTmp.value().second);
 
         if (
             filterMatch_f(
@@ -828,10 +1192,11 @@ std::vector<std::pair<const logItem_c* const, const QDateTime* const>> logDataHu
                 , datetimeTmp
                 , logItemPtrTmp->sourceFileName_f()
                 , logItemPtrTmp->sourceFunctionName_f()
+                , logItemPtrTmp->threadId_f()
                 )
             )
         {
-            resultTmp.emplace_back(std::make_pair(logItemPtrTmp, std::addressof(datetimeTmp)));
+            resultTmp.emplace_back(logItemPtrTmp, std::addressof(datetimeTmp));
         }
         ++startingIteratorTmp;
     }
@@ -842,9 +1207,9 @@ std::vector<std::pair<const logItem_c* const, const QDateTime* const>> logDataHu
 void logDataHub_c::clearLogs_f()
 {
     QMutexLocker lockerTmp(&addMessageMutex_pri);
-    dateTimeToLogItemPtrMap_pri.clear();
+    indexToLogItemPtrAndDatetimeMap_pri.clear();
     messageSizeUMap_hashElementUMap_pri.clear();
-    startLogIteratorToSave_pri = dateTimeToLogItemPtrMap_pri.cbegin();
+    startLogIteratorToSave_pri = indexToLogItemPtrAndDatetimeMap_pri.cbegin();
     if (saveLogFiles_pri)
     {
         currentLogFileName_pri = getNextFilePath_f();
@@ -900,6 +1265,16 @@ QString logFilter_c::sourceFunctionNameContains_f() const
 void logFilter_c::setSourceFunctionNameContains_f(const QString& functionNameContains_par_con)
 {
     functionNameContains_pri = functionNameContains_par_con;
+}
+
+QString logFilter_c::threadIdContains_f() const
+{
+    return threadIdContains_pri;
+}
+
+void logFilter_c::setThreadIdContains_f(const QString& threadIdContains_par_con)
+{
+    threadIdContains_pri = threadIdContains_par_con;
 }
 
 bool logFilter_c::messageContainsSet_f() const
@@ -968,6 +1343,17 @@ void logFilter_c::unsetSourceFunctionNameContains_f()
     functionNameContainsSet_pri = false;
 }
 
+bool logFilter_c::threadIdContainsSet_f() const
+{
+    return threadIdContainsSet_pri;
+}
+
+void logFilter_c::unsetThreadIdContains_f()
+{
+    threadIdContains_pri.clear();
+    threadIdContainsSet_pri = false;
+}
+
 bool logFilter_c::anythingSet_f() const
 {
     return messageContainsSet_pri
@@ -975,7 +1361,8 @@ bool logFilter_c::anythingSet_f() const
             or dateTimeFromSet_pri
             or dateTimeToSet_pri
             or sourceFileNameContainsSet_pri
-            or functionNameContainsSet_pri;
+            or functionNameContainsSet_pri
+            or threadIdContainsSet_pri;
 }
 
 QString logFilter_c::messageContains_f() const

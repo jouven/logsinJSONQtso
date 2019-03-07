@@ -2,18 +2,25 @@
 
 #include "logItemStrMapping.hpp"
 
+QString logItem_c::threadId_f() const
+{
+    return threadId_pri;
+}
+
 logItem_c::logItem_c(const QString& message_par_con
         , const logItem_c::type_ec type_par_con
         //, const QDateTime datetime_par_con
         , const QString& sourceFileName_par_con
         , const QString& sourceFunctionName_par_con
         , const int_fast32_t sourceLineNumber_par_con
-) : message_pri(message_par_con)
+        , const QString& threadId_par_con)
+    : message_pri(message_par_con)
   , type_pri(type_par_con)
-  //, datetime_pri(QDateTime::currentDateTimeUtc())
+  //, datetime_pri(datetime_par_con)
   , sourceFileName_pri(sourceFileName_par_con)
   , sourceFunctionName_pri(sourceFunctionName_par_con)
   , sourceLineNumber_pri(sourceLineNumber_par_con)
+  , threadId_pri(threadId_par_con)
 {
 }
 

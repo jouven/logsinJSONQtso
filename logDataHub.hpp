@@ -30,6 +30,8 @@
 #include <QMutex>
 #include <QObject>
 #include <QMap>
+#include <QFile>
+#include <QTimer>
 
 #include <vector>
 #include <unordered_map>
@@ -57,6 +59,8 @@ class EXPIMP_LOGSINJSONQTSO logFilter_c
     QString functionNameContains_pri;
     bool functionNameContainsSet_pri = false;
 
+    QString threadIdContains_pri;
+    bool threadIdContainsSet_pri = false;
 public:
     logFilter_c() = default;
 
@@ -72,6 +76,8 @@ public:
     void setSourceFileNameContains_f(const QString& fileNameContains_par_con);
     QString sourceFunctionNameContains_f() const;
     void setSourceFunctionNameContains_f(const QString& functionNameContains_par_con);
+    QString threadIdContains_f() const;
+    void setThreadIdContains_f(const QString& threadIdContains_par_con);
 
     bool messageContainsSet_f() const;
     void unsetMessageContains_f();
@@ -85,6 +91,8 @@ public:
     void unsetSourceFileNameContains_f();
     bool sourceFunctionNameContainsSet_f() const;
     void unsetSourceFunctionNameContains_f();
+    bool threadIdContainsSet_f() const;
+    void unsetThreadIdContains_f();
 
     bool anythingSet_f() const;
 };
@@ -94,13 +102,37 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public eines::baseCla
 {
     Q_OBJECT
 
+    //this variable below is to have an order of which log was inserted before another
+    //this has nothing to do with chronological order,
+    //a log "A" can be inserted before log "B", but "B"'s datetime
+    //can be earlier than "A"'s, the issue-point to address here is that storing logs
+    //in a std container or writing them to a file is a single-thread operation
+    //and std::mutex/qmutex thread order is random,
+    //the logged datetime is saved before this "choke situation" on each thread
+    //but the storage order of the logs without using some other library is somewhat random.
+    //Yep, when checking the log file don't trust too much the line order, check the datetimes.
+    //Still in the end the logs cam be fetched and sorted by datetime (not done by this library).
+    //Because multi-threading, it is possible and pretty easy to get multiple log entries
+    //with the same datetime,
+    //that's why the threadId field was added (to give more context).
+    //And finally even running only one thread
+    //more than one log can have the same datetime to the millisecond
+    //(because this library is that fast and QDatetime max precision is 1 millisecond),
+    //but in this case the logs are guaranteed to be in order
+
+    int_fast64_t logIndex_pri = 0;
     //std::map<uint_fast64_t, logItem_c*> indexToLogItemPtrMap_pri;
 
     //std::map<uint_fast64_t, QDateTime> indexToDatetimeMap_pri;
 
-    QMap<QDateTime, logItem_c*> dateTimeToLogItemPtrMap_pri;
+    //because an order is needed
+    QMap<int_fast64_t, std::pair<logItem_c*, QDateTime>> indexToLogItemPtrAndDatetimeMap_pri;
 
-    //UMap --> key = (message + type) size, value = (UMap --> key = (message + type) hash, value = logItem object)
+    //the nested UMap thing is to have less hash collisions,
+    //it should? be less probable to have the same hash within messages of the same size
+    //and is two smaller UMaps faster than one big UMap?
+    //UMap --> key = (message + type) size,
+    //value = (UMap --> key = (message + type + source File + source Function + source Line number) hash, value = logItem object)
     std::unordered_map<int_fast64_t, std::unordered_map<uint_fast64_t, logItem_c>> messageSizeUMap_hashElementUMap_pri;
 
     bool loggingEnabled_pri = true;
@@ -108,17 +140,18 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public eines::baseCla
     bool echoStderrOnError_pri = false;
 
     QMutex addMessageMutex_pri;
+    QTimer saveFileFlushDebounce_pri;
 
     uint_fast64_t maxMessages_pri = 100 * 1000;
     uint_fast64_t maxUniqueMessages_pri = 10 * 1000;
     // 1024 * 1024 * 2 = 2MB
     int_fast64_t maxLogFileByteSize_pri = 1024 * 1024 * 2;
 
-    //because this class hold all the logs
+    //because this class holds all the logs
     //when saving log files, not all the log items are saved
     //this has the starting index for the current log file
     //and when the files changes, this index changes too
-    QMap<QDateTime, logItem_c*>::ConstIterator startLogIteratorToSave_pri;
+    QMap<int_fast64_t, std::pair<logItem_c*, QDateTime>>::ConstIterator startLogIteratorToSave_pri;
     bool startLogIteratorToSaveSet_pri = false;
 
     //clear the log containers when:
@@ -140,7 +173,7 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public eines::baseCla
     QString logFileDatetimeFormat_pri = "yyyyMMdd";
     QString currentDateTimeValue_pri;
 
-    //save them all by default
+    //log types to log, all by default
     std::unordered_set<logItem_c::type_ec> logTypesToSave_pri =
     {
         logItem_c::type_ec::debug
@@ -149,7 +182,7 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public eines::baseCla
         , logItem_c::type_ec::info
     };
 
-    //save them all by default, above setting limits this one too
+    //log types to file save, all by default, above setting limits this one too
     std::unordered_set<logItem_c::type_ec> logTypesToSaveFile_pri =
     {
         logItem_c::type_ec::debug
@@ -157,6 +190,11 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public eines::baseCla
         , logItem_c::type_ec::warning
         , logItem_c::type_ec::info
     };
+
+    //file save log type, true is text, one log entry per line, false is json type
+    bool fileSaveLogTypeText_pri = true;
+    //to keep the file open
+    QFile logFile_pri;
 
     //returns true if the message was inserted
     //still will "append" an error if
@@ -168,10 +206,11 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public eines::baseCla
             , const QString& sourceFunction_par_con
             , const int_fast32_t sourceLineNumber_par_con
             , const QDateTime& dateTime_par_con = QDateTime()
+            , const QString& threadId_par_con = QString()
     );
 
     void write_f(QJsonObject& json_par) const;
-    void read_f(
+    void readLogsFromJsonObject_f(
             const QJsonObject& json_par_con
             , const logFilter_c& logFilter_par_con
     );
@@ -189,7 +228,14 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public eines::baseCla
             , const QDateTime& datetime_par_con
             , const QString& sourceFile_par_con
             , const QString& sourceFunction_par_con
+            , const QString& threadId_par_con
     ) const;
+
+    QString generateTextLine_f(const logItem_c* logItem_par_con, const QDateTime& datetime_par_con);
+    //retuns true on success
+    bool readTextLine_f(QString line_par, const logFilter_c& logFilter_par_con = logFilter_c());
+
+
 public:
     logDataHub_c();
 
@@ -212,7 +258,7 @@ public:
     bool echoStderrOnError_f() const;
     void setEchoStderrOnError_f(const bool echoStderrOnError_par_con);
 
-    std::vector<std::pair<const logItem_c* const, const QDateTime* const> > filter_f(const logFilter_c& logFilter_par_con = logFilter_c()) const;
+    std::vector<std::pair<const logItem_c* const, const QDateTime* const>> filter_f(const logFilter_c& logFilter_par_con = logFilter_c()) const;
 
     //removes all log messages from this class log containers,
     //log files aren't affected BUT it will "rotate" the current log filename
@@ -294,11 +340,21 @@ public:
     //will only work is saveLogFiles = true
     void setClearWhenMaxLogFileSize_f(const bool clearWhenMaxLogFileSize_par_con);
 
+    bool fileSaveLogTypeText_f() const;
+    //true for text logs (1 log entry = 1 text line), false for json
+    void setFileSaveLogTypeText_f(const bool fileSaveLogTypeText_par_con);
+
 Q_SIGNALS:
     //using an int because map size is as int
     void messageAdded_signal(const int index_par_con, const logItem_c* logItem_par_con, const QDateTime* datetime_par_con);
     //emmited when clearLogs is called
     void clearLogs_signal();
+    void stopFlushTimer_signal();
+    void startFlushTimer_signal();
+private Q_SLOTS:
+    void stopFlushTimer_f();
+    void startFlushTimer_f();
+    void flushSaveFile_f();
 };
 
 #endif // LOGSINJSONQTSO_LOGDATAHUB_HPP
