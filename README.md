@@ -1,5 +1,5 @@
 # logsinJSONQtso
-Log library
+Log library, logs can be saved, file-wise, in JSON format or "regular" log entry = 1 text line
 
 Compilation
 -----------
