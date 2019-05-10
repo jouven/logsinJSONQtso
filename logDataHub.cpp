@@ -268,11 +268,11 @@ bool logDataHub_c::addMessageInternal_f(
         }
 
         QString messageToHashTmp(message_par_con + typeStrTmp + sourceFile_par_con + sourceFunction_par_con + QString::number(sourceLineNumber_par_con));
-        eines::hasher_c hasherTmp(
-                    eines::hasher_c::inputType_ec::string
+        hasher_c hasherTmp(
+                    hasher_c::inputType_ec::string
                     , messageToHashTmp
-                    , eines::hasher_c::outputType_ec::unsignedXbitInteger
-                    , eines::hasher_c::hashType_ec::XXHASH64
+                    , hasher_c::outputType_ec::unsignedXbitInteger
+                    , hasher_c::hashType_ec::XXHASH64
         );
         hasherTmp.generateHash_f();
         uint_fast64_t hashResultTmp(hasherTmp.hash64BitNumberResult_f());

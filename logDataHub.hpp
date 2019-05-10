@@ -98,7 +98,7 @@ public:
 };
 
 
-class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public eines::baseClassQt_c
+class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public baseClassQt_c
 {
     Q_OBJECT
 
