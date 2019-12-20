@@ -4,11 +4,17 @@
 
 #include "crossPlatformMacros.hpp"
 
+#include "textQtso/text.hpp"
+
 #include <QString>
+#include <QMap>
+
+#include <unordered_map>
 
 class EXPIMP_LOGSINJSONQTSO logItem_c
 {
-    QString message_pri;
+    //QString message_pri;
+    text_c message_pri;
 public:
     enum class type_ec
     {
@@ -18,6 +24,11 @@ public:
         , error
         , debug
     };
+
+    //keys are lower case
+    static EXPIMP_LOGSINJSONQTSO const QMap<QString, type_ec> strTologTypeMap_pub_sta_con;
+    //values are camelcase
+    static EXPIMP_LOGSINJSONQTSO const std::unordered_map<type_ec, QString> logTypeToStrUMap_pub_sta_con;
 private:
     type_ec type_pri = type_ec::empty;
 
@@ -30,12 +41,13 @@ private:
     int_fast32_t sourceLineNumber_pri = 0;
 
     QString threadId_pri;
+
 //    void read_f(const QJsonObject& json_par_con);
 public:
     logItem_c() = default;
     //logItem_c(const QJsonObject& json_par_con);
     logItem_c(
-            const QString& message_par_con
+            const text_c& message_par_con
             , const type_ec type_par_con
             //, const QDateTime datetime_par_con
             , const QString& sourceFileName_par_con
@@ -47,13 +59,15 @@ public:
   //  void write_f(QJsonObject& json_par) const;
     bool isValid_f() const;
 
-    QString message_f() const;
+    text_c message_f() const;
     type_ec type_f() const;
     //QDateTime datetime_f() const;
     QString sourceFileName_f() const;
     QString sourceFunctionName_f() const;
     int_fast32_t sourceLineNumber_f() const;
     QString threadId_f() const;
+
+    void setTranslated_f(const bool translated_par_con);
 };
 
 #endif // LOGSINJSONQTSO_LOG_HPP

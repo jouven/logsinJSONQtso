@@ -1,16 +1,20 @@
 //library to manage logs
 //by default logs are stored in memory
-//there is a setting to save them also on a json file.
+//there is a setting to save them also on a text/json file.
 //This library uses less memory when the messages are the same,
 //i.e. the same error happening repeatedly
-//the weak point of this library is that it uses json
+
+//the weak point mentioned below can be dodged using "text mode" instead of json
+//The weak point of this library is that it uses json (20191019 in the first versions, not anymore!)
 //when saving the log entris in a file
 //which saves the entire json file every time an entry is added,
 //there is no option to append values in json, the log entries in memory need to be serialized every time
 //which is pretty heavy for a logging library, still
-//since the OS (*nix or windows) normally caches every thing it can and if the log file doesn't grow too much
-//it should be fast enough anyway
+//since the OS (*nix and windows both do this)
+//normally caches everything and if the log file doesn't grow too much
+//it should be fast enough anyway...?
 //for the previous reason the maximum log file size is 2MB by default
+
 
 //all the functions that modify the containers where
 //log objects are saved are thread safe,
@@ -33,6 +37,7 @@
 #include <QFile>
 #include <QTimer>
 
+#include <atomic>
 #include <vector>
 #include <unordered_map>
 #include <map>
@@ -40,6 +45,8 @@
 
 #define MACRO_FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 #define MACRO_ADDMESSAGE(VAR, MESSAGE, TYPE) VAR.addMessage_f(MESSAGE, TYPE, MACRO_FILENAME, __func__, __LINE__)
+
+class translator_c;
 
 class EXPIMP_LOGSINJSONQTSO logFilter_c
 {
@@ -102,37 +109,25 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public baseClassQt_c
 {
     Q_OBJECT
 
-    //this variable below is to have an order of which log was inserted before another
-    //this has nothing to do with chronological order,
-    //a log "A" can be inserted before log "B", but "B"'s datetime
-    //can be earlier than "A"'s, the issue-point to address here is that storing logs
-    //in a std container or writing them to a file is a single-thread operation
-    //and std::mutex/qmutex thread order is random,
-    //the logged datetime is saved before this "choke situation" on each thread
-    //but the storage order of the logs without using some other library is somewhat random.
-    //Yep, when checking the log file don't trust too much the line order, check the datetimes.
-    //Still in the end the logs cam be fetched and sorted by datetime (not done by this library).
-    //Because multi-threading, it is possible and pretty easy to get multiple log entries
-    //with the same datetime,
-    //that's why the threadId field was added (to give more context).
-    //And finally even running only one thread
-    //more than one log can have the same datetime to the millisecond
-    //(because this library is that fast and QDatetime max precision is 1 millisecond),
-    //but in this case the logs are guaranteed to be in order
+    //this variable below is the absolute true order of log insertion
+    //because more than one log can have the same datetime to the millisecond (which is the maximum resolution of QDatetime)
+    //and how do you sort when 2 or more values are the same?
 
-    int_fast64_t logIndex_pri = 0;
+    std::atomic<int_fast64_t> atomicLogIndex_pri = {0};
+    int_fast64_t getNewLogIndex_f();
     //std::map<uint_fast64_t, logItem_c*> indexToLogItemPtrMap_pri;
 
     //std::map<uint_fast64_t, QDateTime> indexToDatetimeMap_pri;
 
     //because an order is needed
+    //Key index of insertion, value pair with a ptr to the logItem object and the datetime of the log insertion
     QMap<int_fast64_t, std::pair<logItem_c*, QDateTime>> indexToLogItemPtrAndDatetimeMap_pri;
 
     //the nested UMap thing is to have less hash collisions,
     //it should? be less probable to have the same hash within messages of the same size
     //and is two smaller UMaps faster than one big UMap?
-    //UMap --> key = (message + type) size,
-    //value = (UMap --> key = (message + type + source File + source Function + source Line number) hash, value = logItem object)
+    //Outer UMap key = it's the SIZE value of (message + type + source File + source Function + source Line number)
+    //Outer UMap value = (nested UMap key = (message + type + source File + source Function + source Line number) hash, nested UMap value = logItem object)
     std::unordered_map<int_fast64_t, std::unordered_map<uint_fast64_t, logItem_c>> messageSizeUMap_hashElementUMap_pri;
 
     bool loggingEnabled_pri = true;
@@ -200,7 +195,7 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public baseClassQt_c
     //still will "append" an error if
     //file saving fails
     bool addMessageInternal_f(
-            const QString& message_par_con
+            const text_c& message_par_con
             , const logItem_c::type_ec type_par_con
             , const QString& sourceFile_par_con
             , const QString& sourceFunction_par_con
@@ -231,19 +226,25 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public baseClassQt_c
             , const QString& threadId_par_con
     ) const;
 
-    QString generateTextLine_f(const logItem_c* logItem_par_con, const QDateTime& datetime_par_con);
+    QString generateTextLine_f(logItem_c* logItem_par, const QDateTime& datetime_par_con) const;
+
+    //parses a text log line and (if successfully parsed) adds it to log containers/objects of this class
     //retuns true on success
     bool readTextLine_f(QString line_par, const logFilter_c& logFilter_par_con = logFilter_c());
 
-
+    //if a translator ptr is set, log entries will be translated when written in the log file/s
+    //also filtering will be done against the translations
+    translator_c* translator_pri = nullptr;
 public:
-    logDataHub_c();
+    //no translation errors are reported
+    //care must be taken that the translator_c object pointed by translatorPtr_par
+    //has its config properly set
+    logDataHub_c(translator_c* translatorPtr_par);
 
     //returns true if the message was inserted
-    //still will "append" an error if
-    //file saving fails
+    //will "append" an error if file saving fails
     bool addMessage_f(
-            const QString& message_par_con
+            const text_c& message_par_con
             , const logItem_c::type_ec type_par_con
             , const QString& sourceFile_par_con
             , const QString& sourceFunction_par_con
@@ -304,8 +305,11 @@ public:
     //loads a previously saved log file/s
     //this can be a single file or a "baseName", "basename" will load all the files with the same basename
     //if logPathBaseName_par_con is empty, applicationName will be used
-    //keepUsingLastLogFile_par_con will set logSaveDirectoryPath to the loaded file directory
+    //keepUsingLastLogFile_par_con will set logSaveDirectoryPath to the loaded file/s directory
     //returns true if logs were loaded
+    //writing log lines to a file is disabled while loading the log file/s
+    //WARNING duplicates can be inserted this way, because loaded logs are appended, they won't replace existing indexes,
+    //even if the index order doesn't make sense chronologically
     bool loadLogFiles_f(
             const QString& logPathBaseName_par_con = QString()
             , const logFilter_c& logFilter_par_con = logFilter_c()
@@ -344,8 +348,13 @@ public:
     //true for text logs (1 log entry = 1 text line), false for json
     void setFileSaveLogTypeText_f(const bool fileSaveLogTypeText_par_con);
 
+    translator_c* translatorPtr_f() const;
+    //no translation errors are reported
+    //care must be taken that the translator_c object pointed by translatorPtr_par
+    //has its config properly set
+    void setTranslatorPtr_f(translator_c* translatorPtr_par);
 Q_SIGNALS:
-    //using an int because map size is as int
+    //using an int because QMap size is as int
     void messageAdded_signal(const int index_par_con, const logItem_c* logItem_par_con, const QDateTime* datetime_par_con);
     //emmited when clearLogs is called
     void clearLogs_signal();

@@ -26,12 +26,10 @@ DEFINES += LOGSINJSONQTSO_LIB
 
 SOURCES += \
     logItem.cpp \
-    logItemStrMapping.cpp \
     logDataHub.cpp
 
 HEADERS += \
     logItem.hpp \
-    logItemStrMapping.hpp \
     logDataHub.hpp \
     crossPlatformMacros.hpp
 

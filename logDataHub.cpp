@@ -1,9 +1,8 @@
 #include "logDataHub.hpp"
 
-#include "logItemStrMapping.hpp"
-
 #include "cryptoQtso/hashQt.hpp"
 #include "essentialQtso/essentialQt.hpp"
+#include "translatorJSONQtso/translator.hpp"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -161,6 +160,16 @@ void logDataHub_c::setFileSaveLogTypeText_f(const bool fileSaveLogTypeText_par_c
     fileSaveLogTypeText_pri = fileSaveLogTypeText_par_con;
 }
 
+translator_c*logDataHub_c::translatorPtr_f() const
+{
+    return translator_pri;
+}
+
+void logDataHub_c::setTranslatorPtr_f(translator_c* translatorPtr_par)
+{
+    translator_pri = translatorPtr_par;
+}
+
 void logDataHub_c::stopFlushTimer_f()
 {
     saveFileFlushDebounce_pri.stop();
@@ -171,8 +180,13 @@ void logDataHub_c::startFlushTimer_f()
     saveFileFlushDebounce_pri.start();
 }
 
+int_fast64_t logDataHub_c::getNewLogIndex_f()
+{
+    return ++atomicLogIndex_pri;
+}
+
 bool logDataHub_c::addMessageInternal_f(
-        const QString& message_par_con
+        const text_c& message_par_con
         , const logItem_c::type_ec type_par_con
         , const QString& sourceFile_par_con
         , const QString& sourceFunction_par_con
@@ -183,14 +197,17 @@ bool logDataHub_c::addMessageInternal_f(
     bool resultTmp(false);
     while (true)
     {
-        if (message_par_con.isEmpty())
+        if (message_par_con.empty_f())
         {
             appendError_f("Empy message");
             break;
         }
 
+        //20191017 I guess I was being stupid, this can be solved easily using an index with an atomic integer
+        //and even in a multithread situation it will come well sorted (no need for a thread name even, but it's already done so...)
+
         //UPDATE after creating the regular, log per text line when saving into a file feature, which is way faster than JSON,
-        //tho keeping the save file open helps too, which I didn't previously, still many log entries can get the same datetime
+        //tho keeping the save file open helps too, which I didn't previously, still many log entries can get the same datetime (to the millisecond)
         //and the mutex locker isn't slow enough to make a millisecond difference, even on debug.
         //As I explained before below how do you deal with multiple logs with the same datetimes?
         //which goes first or later when writing the log file? So, my solution is... add the thread name into the logs too for context
@@ -209,19 +226,23 @@ bool logDataHub_c::addMessageInternal_f(
         //more than one try with the same datetime
         //but a log file created by this class can't be like this
         const QDateTime currentDateTimeTmp(dateTime_par_con.isNull() ? QDateTime::currentDateTimeUtc() : dateTime_par_con);
+        const int_fast64_t indexTmp_con(getNewLogIndex_f());
 
-        QMutexLocker lockerTmp(&addMessageMutex_pri);
+        //ONLY 1 THREAD AT TIME FROM HERE
+        QMutexLocker lockerTmp(std::addressof(addMessageMutex_pri));
+        //compiler complains unsigned vs signed because Qt uses signed for size... sigh
         bool maxMessagesReachedTmp(indexToLogItemPtrAndDatetimeMap_pri.size() >= maxMessages_pri);
         bool maxUniqueMessagesReachedTmp(uniqueMessageCount_f() >= maxUniqueMessages_pri);
         bool maxLogFileSizeReachedTmp(false);
 
+        //threads should do a setObjectName prior for this to work, threadFunctionQtso does it
+        //for all the threads generated from that library
+        //even for "empty named" threads, it gets the internal threadId and sets it as the object name
         QString threadIdTmp(threadId_par_con.isNull() ? QThread::currentThread()->objectName() : threadId_par_con);
         if (threadIdTmp.isEmpty())
         {
             threadIdTmp = "main";
         }
-
-        logIndex_pri = logIndex_pri + 1;
 
         if (saveLogFiles_pri)
         {
@@ -255,11 +276,11 @@ bool logDataHub_c::addMessageInternal_f(
             }
         }
 
-        QString typeStrTmp(logTypeToStrUMap_glo_sta_con.at(type_par_con));
+        const QString& typeStrTmp(logItem_c::logTypeToStrUMap_pub_sta_con.at(type_par_con));
 
         if (echoStdoutOnAddMessage_pri)
         {
-            qtOutRef_ext() << "\nMessage: " << message_par_con << '\n'
+            qtOutRef_ext() << "\nMessage: " << message_par_con.rawReplace_f() << '\n'
                       << "Type: " << typeStrTmp << '\n'
                       << "DateTime: " << currentDateTimeTmp.toLocalTime().toString("yyyy-MM-dd hh:mm:ss.zzz") << '\n'
                       << "Source file: " << sourceFile_par_con << '\n'
@@ -267,7 +288,11 @@ bool logDataHub_c::addMessageInternal_f(
                       << "Source line number: " << sourceLineNumber_par_con;
         }
 
-        QString messageToHashTmp(message_par_con + typeStrTmp + sourceFile_par_con + sourceFunction_par_con + QString::number(sourceLineNumber_par_con));
+        QString messageToHashTmp(message_par_con.rawReplace_f() + typeStrTmp + sourceFile_par_con + sourceFunction_par_con + QString::number(sourceLineNumber_par_con));
+        //minor warning, with the addition of text_c, a log message could be inserted already translated or not,
+        //this means "memory saving" won't be as effective as with simple string and no translation
+        //although in theory inserted message aren't translated (actonQtso and actonQtg do this),
+        //it's only when fecthing log entries that translations happen (if the translator obj is set)
         hasher_c hasherTmp(
                     hasher_c::inputType_ec::string
                     , messageToHashTmp
@@ -281,11 +306,11 @@ bool logDataHub_c::addMessageInternal_f(
 
         //search for a the message size
         int_fast64_t messageSizeTmp(messageToHashTmp.size());
-        std::unordered_map<int_fast64_t, std::unordered_map<uint_fast64_t, logItem_c>>::iterator findSizeResultTmp(messageSizeUMap_hashElementUMap_pri.find(messageSizeTmp));
+        auto findSizeResultTmp(messageSizeUMap_hashElementUMap_pri.find(messageSizeTmp));
         if (findSizeResultTmp not_eq messageSizeUMap_hashElementUMap_pri.end())
         {
             //search for the hash
-            std::unordered_map<uint_fast64_t, logItem_c>::iterator findHashResultTmp(findSizeResultTmp->second.find(hashResultTmp));
+            auto findHashResultTmp(findSizeResultTmp->second.find(hashResultTmp));
             if (findHashResultTmp not_eq findSizeResultTmp->second.end())
             {
                 if (message_par_con not_eq findHashResultTmp->second.message_f())
@@ -312,22 +337,21 @@ bool logDataHub_c::addMessageInternal_f(
         else
         {
             std::unordered_map<uint_fast64_t, logItem_c> hashElementUMapTmp;
-            //std::pair<std::unordered_map<uint_fast64_t, logItem_c>::iterator, bool> emplaceResultTmp(
-                        hashElementUMapTmp.emplace(hashResultTmp, logItem_c(
-                                                       message_par_con
-                                                       , type_par_con
-                                                       , sourceFile_par_con
-                                                       , sourceFunction_par_con
-                                                       , sourceLineNumber_par_con
-                                                       , threadIdTmp
-                        ));
-            //);
+            hashElementUMapTmp.emplace(hashResultTmp, logItem_c(
+                                           message_par_con
+                                           , type_par_con
+                                           , sourceFile_par_con
+                                           , sourceFunction_par_con
+                                           , sourceLineNumber_par_con
+                                           , threadIdTmp
+            ));
+
             messageSizeUMap_hashElementUMap_pri.emplace(messageSizeTmp, hashElementUMapTmp);
             logItemPtrTmp = std::addressof(messageSizeUMap_hashElementUMap_pri.at(messageSizeTmp).at(hashResultTmp));
         }
 
-        QMap<int_fast64_t, std::pair<logItem_c*, QDateTime>>::iterator dateTimeToLogItemPtrMapIteratorTmp(
-                    indexToLogItemPtrAndDatetimeMap_pri.insert(logIndex_pri, {logItemPtrTmp, currentDateTimeTmp})
+        QMap<int_fast64_t, std::pair<logItem_c*, QDateTime>>::const_iterator dateTimeToLogItemPtrMapIteratorTmp(
+                    indexToLogItemPtrAndDatetimeMap_pri.insert(indexTmp_con, {logItemPtrTmp, currentDateTimeTmp})
         );
         resultTmp = true;
 
@@ -356,7 +380,7 @@ bool logDataHub_c::addMessageInternal_f(
         //QOUT_TS("logIndex_pri " << QString::number(logIndex_pri) << endl);
 #endif
 
-        Q_EMIT messageAdded_signal(logIndex_pri, logItemPtrTmp, std::addressof(dateTimeToLogItemPtrMapIteratorTmp.value().second));
+        Q_EMIT messageAdded_signal(indexTmp_con, logItemPtrTmp, std::addressof(dateTimeToLogItemPtrMapIteratorTmp.value().second));
 
         if (saveLogFiles_pri and isValidLogPathBaseName_pri and logTypesToSaveFile_pri.count(type_par_con) == 1)
         {
@@ -622,23 +646,23 @@ bool logDataHub_c::readLogFile_f(
             break;
         }
         QByteArray byteArrayTmp(fileTmp.readAll());
+        bool saveLogFilesValueTmp(saveLogFiles_pri);
+        //disable saving while reading a log file
+        saveLogFiles_pri = false;
         if (fileSaveLogTypeText_pri)
         {
             QList<QByteArray> linesTmp(byteArrayTmp.split('\n'));
-            bool saveLogFilesValueTmp(saveLogFiles_pri);
-            //disable saving while reading from a json file
-            saveLogFiles_pri = false;
             for (const QByteArray& lineTmp_ite_con : linesTmp)
             {
+                //20191114 read log lines, ignore the ones that aren't read successfully
                 if (readTextLine_f(lineTmp_ite_con, logFilter_par_con))
                 {
                 }
-                else
-                {
-                    break;
-                }
+//                else
+//                {
+//                    break;
+//                }
             }
-            saveLogFiles_pri = saveLogFilesValueTmp;
         }
         else
         {
@@ -649,6 +673,7 @@ bool logDataHub_c::readLogFile_f(
             }
             readLogsFromJsonObject_f(jsonDocObjTmp.object(), logFilter_par_con);
         }
+        saveLogFiles_pri = saveLogFilesValueTmp;
 
         resultTmp = true;
         break;
@@ -747,7 +772,7 @@ void logDataHub_c::setLogSaveDirectoryPath_f(
 //{}
 
 bool logDataHub_c::addMessage_f(
-        const QString& message_par_con
+        const text_c& message_par_con
         , const logItem_c::type_ec type_par_con
         , const QString& sourceFile_par_con
         , const QString& sourceFunction_par_con
@@ -768,6 +793,7 @@ bool logDataHub_c::addMessage_f(
     return resultTmp;
 }
 
+
 void logDataHub_c::setEchoToStdoutOnAddMessage_f(const bool echoOnStdoutOnAddMessage_par_con)
 {
     echoStdoutOnAddMessage_pri = echoOnStdoutOnAddMessage_par_con;
@@ -778,21 +804,62 @@ bool logDataHub_c::echoToStdoutOnAddMessage_f() const
     return echoStdoutOnAddMessage_pri;
 }
 
-//field order 0DateTime 1threadId 2Type 3File 4Function 5Line 6Message
-//doesn't include newline at the end
-QString logDataHub_c::generateTextLine_f(const logItem_c* logItem_par_con, const QDateTime& datetime_par_con)
+//field order (index wise) 0DateTime 1threadId 2Type 3File 4Function 5Line 6translated 7Message 8Tab-indexes 9Newline-indexes
+//the resulting QString doesn't include newline at the end
+QString logDataHub_c::generateTextLine_f(logItem_c* logItem_par, const QDateTime& datetime_par_con) const
 {
     QString resultTmp;
     resultTmp.append(datetime_par_con.toString("yyyy-MM-dd hh:mm:ss.zzz")).append('\t');
-    resultTmp.append(logItem_par_con->threadId_f()).append('\t');
-    resultTmp.append(logTypeToStrUMap_glo_sta_con.at(logItem_par_con->type_f())).append('\t');
-    resultTmp.append(logItem_par_con->sourceFileName_f()).append('\t');
-    resultTmp.append(logItem_par_con->sourceFunctionName_f()).append('\t');
-    resultTmp.append(QString::number(logItem_par_con->sourceLineNumber_f())).append('\t');
+    resultTmp.append(logItem_par->threadId_f()).append('\t');
+    resultTmp.append(logItem_c::logTypeToStrUMap_pub_sta_con.at(logItem_par->type_f())).append('\t');
+    resultTmp.append(logItem_par->sourceFileName_f()).append('\t');
+    resultTmp.append(logItem_par->sourceFunctionName_f()).append('\t');
+    resultTmp.append(QString::number(logItem_par->sourceLineNumber_f())).append('\t');
 
-    QString messageTmp(logItem_par_con->message_f());
+    QString messageTmp;
+    while (true)
+    {
+        //this function is used to output the log to storage
+        //so it must to try to translate
+
+        //1 the message is already translated, just replace
+        if (logItem_par->message_f().translated_f())
+        {
+            messageTmp = logItem_par->message_f().rawReplace_f();
+            resultTmp.append("T\t");
+            break;
+        }
+        //there is a translator set and the message is not translated
+        //translate the message BUT don't set it as translated in memory and
+        //don't replace the original message with the translation in memory
+        if (translator_pri not_eq nullptr and not logItem_par->message_f().translated_f())
+        {
+            bool translationFoundTmp(false);
+            QString translatedMessageTmp(translator_pri->translateAndReplace_f(logItem_par->message_f(), std::addressof(translationFoundTmp)));
+            if (translationFoundTmp)
+            {
+                messageTmp = translatedMessageTmp;
+                //this wouldn't allow future translation
+                //i.e. if the translation language is changed, the message is already translated
+                //although if I improve the translation library it could be possible chaining translations
+                //logItem_par->setTranslated_f(translationFoundTmp);
+                resultTmp.append("T\t");
+                break;
+            }
+        }
+
+        messageTmp = logItem_par->message_f().rawReplace_f();
+        resultTmp.append("U\t");
+
+        break;
+    }
+
     //bye carriage returns
     messageTmp.remove('\r');
+
+#ifdef DEBUGJOUVEN
+    //qDebug() << "messageTmp " <<  messageTmp;
+#endif
 
     std::vector<int_fast64_t> tabIndexsTmp;
     {
@@ -873,27 +940,36 @@ bool logDataHub_c::readTextLine_f(
         //bye carriage returns
         line_par.remove('\r');
         QStringList fieldsTmp(line_par.split('\t'));
-        //it should have 7 fields at least
-        if (fieldsTmp.size() < 7)
+        //it should have 10 fields at least
+        if (fieldsTmp.size() < 10)
         {
-            appendError_f("Less than 7 fields per log line");
+            appendError_f("Less than 10 fields per log line");
             break;
         }
 
-        //field order 0DateTime 1threadId 2Type 3File 4Function 5Line 6Message
+        //field order (index wise) 0DateTime 1threadId 2Type 3File 4Function 5Line 6translated 7Message 8Tab-indexes 9Newline-indexes
 
-        QString typeStrTmp(fieldsTmp.at(2));
-        logItem_c::type_ec typeTmp(strTologTypeMap_glo_sta_con.value(typeStrTmp));
+        const QString& typeStrTmp(fieldsTmp.at(2));
+        logItem_c::type_ec typeTmp(logItem_c::strTologTypeMap_pub_sta_con.value(typeStrTmp));
 
-        QString messageTmp(fieldsTmp.at(6));
+        QString messageTmp(fieldsTmp.at(7));
+        if (messageTmp.isEmpty())
+        {
+            appendError_f("Empy message log line");
+            break;
+        }
         //IMPORTANT order, in the writeTextLine function, message "field",
         //first the tabs are "serialized" and then the "newlines"
         //when reading it has to be done in reverse, first the newlines and then the tabs
 
         //add newlines
-        if (fieldsTmp.size() > 8)
+        const QString& newLinePositonsFieldStr(fieldsTmp.at(9));
+        if (newLinePositonsFieldStr.isEmpty())
         {
-            QString newLinePositonsFieldStr(fieldsTmp.at(8));
+            //message had no newlines
+        }
+        else
+        {
             QVector<QStringRef> newLinePositionsStrVectorTmp(newLinePositonsFieldStr.splitRef(','));
             std::vector<int_fast64_t> newLinePositionsVectorTmp;
             newLinePositionsVectorTmp.reserve(newLinePositionsStrVectorTmp.size());
@@ -914,9 +990,13 @@ bool logDataHub_c::readTextLine_f(
         }
 
         //add tabs
-        if (fieldsTmp.size() > 7)
+        const QString& tabPositonsFieldStr(fieldsTmp.at(8));
+        if (tabPositonsFieldStr.isEmpty())
         {
-            QString tabPositonsFieldStr(fieldsTmp.at(7));
+            //message had no tabs
+        }
+        else
+        {
             QVector<QStringRef> tabPositionsStrVectorTmp(tabPositonsFieldStr.splitRef(','));
             std::vector<int_fast64_t> tabPositionsVectorTmp;
             tabPositionsVectorTmp.reserve(tabPositionsStrVectorTmp.size());
@@ -937,11 +1017,10 @@ bool logDataHub_c::readTextLine_f(
         }
 
         QDateTime datetimeTmp(QDateTime::fromString(fieldsTmp.at(0), "yyyy-MM-dd hh:mm:ss.zzz"));
-        QString threadIdTmp(fieldsTmp.at(1));
+        const QString& threadIdTmp(fieldsTmp.at(1));
         datetimeTmp.setTimeSpec(Qt::UTC);
-        QString sourceFileTmp(fieldsTmp.at(3));
-        QString sourceFunctionTmp(fieldsTmp.at(4));
-        int_fast32_t sourceLineNumberTmp(fieldsTmp.at(5).toLongLong());
+        const QString& sourceFileTmp(fieldsTmp.at(3));
+        const QString& sourceFunctionTmp(fieldsTmp.at(4));
 
         if (
             filterMatch_f(
@@ -955,7 +1034,17 @@ bool logDataHub_c::readTextLine_f(
                 )
             )
         {
-            addMessageInternal_f(messageTmp, typeTmp, sourceFileTmp, sourceFunctionTmp, sourceLineNumberTmp, datetimeTmp, threadIdTmp);
+            int_fast32_t sourceLineNumberTmp(fieldsTmp.at(5).toLongLong());
+            text_c textMessageTmp(messageTmp);
+            if (fieldsTmp.at(6) == "T")
+            {
+                textMessageTmp.setTranslated_f(true);
+            }
+            else
+            {
+                //not translated
+            }
+            addMessageInternal_f(textMessageTmp, typeTmp, sourceFileTmp, sourceFunctionTmp, sourceLineNumberTmp, datetimeTmp, threadIdTmp);
             resultTmp = true;
         }
         break;
@@ -974,12 +1063,39 @@ void logDataHub_c::write_f(QJsonObject& json_par) const
     QMap<int_fast64_t, std::pair<logItem_c*, QDateTime>>::ConstIterator startingIteratorTmp(startLogIteratorToSaveSet_pri ? startLogIteratorToSave_pri : indexToLogItemPtrAndDatetimeMap_pri.begin());
     while (startingIteratorTmp not_eq indexToLogItemPtrAndDatetimeMap_pri.end())
     {
-        logItem_c* logItemPtrTmp(startingIteratorTmp.value().first);
+        logItem_c* const logItemPtrTmp(startingIteratorTmp.value().first);
         QDateTime datetimeTmp(startingIteratorTmp.value().second);
 
         QJsonObject jsonObjectTmp;
-        jsonObjectTmp["message"] = logItemPtrTmp->message_f();
-        jsonObjectTmp["type"] = logTypeToStrUMap_glo_sta_con.at(logItemPtrTmp->type_f());
+
+        QString messageTmp;
+        while (true)
+        {
+            if (logItemPtrTmp->message_f().translated_f())
+            {
+                messageTmp = logItemPtrTmp->message_f().rawReplace_f();
+                break;
+            }
+            if (translator_pri not_eq nullptr and not logItemPtrTmp->message_f().translated_f())
+            {
+                bool translationFoundTmp(false);
+                QString translatedMessageTmp(translator_pri->translateAndReplace_f(logItemPtrTmp->message_f(), std::addressof(translationFoundTmp)));
+                if (translationFoundTmp)
+                {
+                    messageTmp = translatedMessageTmp;
+                    //logItemPtrTmp->setTranslated_f(translationFoundTmp);
+                }
+                break;
+            }
+
+            messageTmp = logItemPtrTmp->message_f().rawReplace_f();
+
+            break;
+        }
+
+        jsonObjectTmp["translated"] = logItemPtrTmp->message_f().translated_f();
+        jsonObjectTmp["message"] = messageTmp;
+        jsonObjectTmp["type"] = logItem_c::logTypeToStrUMap_pub_sta_con.at(logItemPtrTmp->type_f());
         jsonObjectTmp["datetime"] = datetimeTmp.toString("yyyy-MM-dd hh:mm:ss.zzz");
         jsonObjectTmp["sourceFile"] = logItemPtrTmp->sourceFileName_f();
         jsonObjectTmp["sourceFunction"] = logItemPtrTmp->sourceFunctionName_f();
@@ -1018,14 +1134,16 @@ bool logDataHub_c::filterMatch_f(
             break;
         }
 
+        //20191107 to prevent using logFilter_par_con.types_f().cbegin() (temporary)
+        auto typesTmp(logFilter_par_con.types_f());
         //types
         if (not logFilter_par_con.typesSet_f()
             or (
-                not logFilter_par_con.types_f().empty()
+                not typesTmp.empty()
                 and std::find(
-                    logFilter_par_con.types_f().begin()
-                    , logFilter_par_con.types_f().end()
-                    , typeStr_par_con) not_eq logFilter_par_con.types_f().end()
+                    typesTmp.cbegin()
+                    , typesTmp.cend()
+                    , typeStr_par_con) not_eq typesTmp.cend()
                 )
         )
         {
@@ -1114,7 +1232,9 @@ bool logDataHub_c::filterMatch_f(
     return resultTmp;
 }
 
-logDataHub_c::logDataHub_c()
+logDataHub_c::logDataHub_c(
+        translator_c* translatorPtr_par
+) : translator_pri(translatorPtr_par)
 {
     qRegisterMetaType<const logItem_c*>("const logItem_c*");
     saveFileFlushDebounce_pri.setSingleShot(true);
@@ -1138,14 +1258,22 @@ void logDataHub_c::readLogsFromJsonObject_f(
         QJsonObject actionDataJsonObject(item_ite_con.toObject());
 
         QString messageTmp(actionDataJsonObject["message"].toString());
+        if (messageTmp.isEmpty())
+        {
+            //ignore empty message
+            continue;
+        }
+
         QString threadIdTmp(actionDataJsonObject["threadId"].toString());
         QString typeStrTmp(actionDataJsonObject["type"].toString().toLower());
-        logItem_c::type_ec typeTmp(strTologTypeMap_glo_sta_con.value(typeStrTmp));
+        logItem_c::type_ec typeTmp(logItem_c::strTologTypeMap_pub_sta_con.value(typeStrTmp));
         QDateTime datetimeTmp(QDateTime::fromString(actionDataJsonObject["datetime"].toString(), "yyyy-MM-dd hh:mm:ss.zzz"));
         datetimeTmp.setTimeSpec(Qt::UTC);
         QString sourceFileTmp(actionDataJsonObject["sourceFile"].toString());
         QString sourceFunctionTmp(actionDataJsonObject["sourceFunction"].toString());
         int_fast32_t sourceLineNumberTmp(actionDataJsonObject["sourceLineNumber"].toString("0").toLongLong());
+        bool translatedTmp(actionDataJsonObject["translated"].toBool());
+
 
         if (
             filterMatch_f(
@@ -1159,7 +1287,12 @@ void logDataHub_c::readLogsFromJsonObject_f(
                 )
             )
         {
-            addMessageInternal_f(messageTmp, typeTmp, sourceFileTmp, sourceFunctionTmp, sourceLineNumberTmp, datetimeTmp, threadIdTmp);
+            text_c textMessageTmp(messageTmp);
+            if (translatedTmp)
+            {
+                textMessageTmp.setTranslated_f(true);
+            }
+            addMessageInternal_f(textMessageTmp, typeTmp, sourceFileTmp, sourceFunctionTmp, sourceLineNumberTmp, datetimeTmp, threadIdTmp);
         }
     }
     saveLogFiles_pri = saveLogFilesValueTmp;
@@ -1181,13 +1314,37 @@ std::vector<std::pair<const logItem_c* const, const QDateTime* const> > logDataH
     QMap<int_fast64_t, std::pair<logItem_c*, QDateTime>>::ConstIterator startingIteratorTmp(indexToLogItemPtrAndDatetimeMap_pri.cbegin());
     while (startingIteratorTmp not_eq indexToLogItemPtrAndDatetimeMap_pri.cend())
     {
-        logItem_c const* const logItemPtrTmp(startingIteratorTmp.value().first);
+        logItem_c* const logItemPtrTmp(startingIteratorTmp.value().first);
         const QDateTime& datetimeTmp(startingIteratorTmp.value().second);
+
+        QString messageTmp;
+        while (true)
+        {
+            if (logItemPtrTmp->message_f().translated_f())
+            {
+                messageTmp = logItemPtrTmp->message_f().rawReplace_f();
+                break;
+            }
+            if (translator_pri not_eq nullptr and not logItemPtrTmp->message_f().translated_f())
+            {
+                bool translationFoundTmp(false);
+                QString translatedMessageTmp(translator_pri->translateAndReplace_f(logItemPtrTmp->message_f(), std::addressof(translationFoundTmp)));
+                if (translationFoundTmp)
+                {
+                    messageTmp = translatedMessageTmp;
+                    //logItemPtrTmp->setTranslated_f(translationFoundTmp);
+                    break;
+                }
+            }
+
+            messageTmp = logItemPtrTmp->message_f().rawReplace_f();
+            break;
+        }
 
         if (
             filterMatch_f(
                 logFilter_par_con
-                , logItemPtrTmp->message_f()
+                , messageTmp
                 , logItemPtrTmp->type_f()
                 , datetimeTmp
                 , logItemPtrTmp->sourceFileName_f()
