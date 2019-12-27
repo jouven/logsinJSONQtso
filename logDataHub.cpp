@@ -324,9 +324,9 @@ bool logDataHub_c::addMessageInternal_f(
                 else
                 {
                     qtErrRef_ext() << "\nDifferent message but same size and same hash, message to insert\n"
-                                   << message_par_con.rawText_f()
+                                   << message_par_con.rawReplace_f()
                                    << "\nmessage found\n"
-                                   << findHashResultTmp->second.message_f().rawText_f() << endl;
+                                   << findHashResultTmp->second.message_f().rawReplace_f() << endl;
                     //throw;
                 }
                 logItemPtrTmp = std::addressof(findHashResultTmp->second);

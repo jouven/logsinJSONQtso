@@ -130,6 +130,12 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public baseClassQt_c
     //Outer UMap value = (nested UMap key = (message + type + source File + source Function + source Line number) hash, nested UMap value = logItem object)
     std::unordered_map<int_fast64_t, std::unordered_map<uint_fast64_t, logItem_c>> messageSizeUMap_hashElementUMap_pri;
 
+    //NOTODO? now that logItem_c uses text_c instead of QString, there is a further possible optimization
+    //if the text is the same and the replacement values change and they are "big", the replacement values could be hashed and stored
+    //in another container similar to messageSizeUMap_hashElementUMap_pri but only for replacement values, indexToLogItemPtrAndDatetimeMap_pri would need
+    //another pointer in the value "class" to reference an element to this new container
+    //but as of 20191227 there is no case of the same text repeating a lot but with different replacement values, also no big replacement values in general
+
     bool loggingEnabled_pri = true;
     bool echoStdoutOnAddMessage_pri = false;
     bool echoStderrOnError_pri = false;
