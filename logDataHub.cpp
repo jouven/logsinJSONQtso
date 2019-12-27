@@ -313,9 +313,21 @@ bool logDataHub_c::addMessageInternal_f(
             auto findHashResultTmp(findSizeResultTmp->second.find(hashResultTmp));
             if (findHashResultTmp not_eq findSizeResultTmp->second.end())
             {
-                if (message_par_con not_eq findHashResultTmp->second.message_f())
+                //here is the "slower insertion less memory usage tradeoff",
+                //when inserting a message that already exists in memory
+                //it will always be "full compared", "worst case" it's one string comparison
+                //plus two integer-keyed unordered_maps finds which are fast
+                if (message_par_con == findHashResultTmp->second.message_f())
                 {
-                    qtErrRef_ext() << "\nDifferent message, same size, same hash";
+                   //message being inserted has the same text as the one found, which is OK
+                }
+                else
+                {
+                    qtErrRef_ext() << "\nDifferent message but same size and same hash, message to insert\n"
+                                   << message_par_con.rawText_f()
+                                   << "\nmessage found\n"
+                                   << findHashResultTmp->second.message_f().rawText_f() << endl;
+                    //throw;
                 }
                 logItemPtrTmp = std::addressof(findHashResultTmp->second);
             }
