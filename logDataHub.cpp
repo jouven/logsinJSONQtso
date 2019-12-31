@@ -1092,6 +1092,7 @@ void logDataHub_c::write_f(QJsonObject& json_par) const
             {
                 bool translationFoundTmp(false);
                 QString translatedMessageTmp(translator_pri->translateAndReplace_f(logItemPtrTmp->message_f(), std::addressof(translationFoundTmp)));
+                jsonObjectTmp["translated"] = translationFoundTmp;
                 if (translationFoundTmp)
                 {
                     messageTmp = translatedMessageTmp;
@@ -1100,12 +1101,12 @@ void logDataHub_c::write_f(QJsonObject& json_par) const
                 break;
             }
 
+            jsonObjectTmp["translated"] = false;
             messageTmp = logItemPtrTmp->message_f().rawReplace_f();
 
             break;
         }
 
-        jsonObjectTmp["translated"] = logItemPtrTmp->message_f().translated_f();
         jsonObjectTmp["message"] = messageTmp;
         jsonObjectTmp["type"] = logItem_c::logTypeToStrUMap_pub_sta_con.at(logItemPtrTmp->type_f());
         jsonObjectTmp["datetime"] = datetimeTmp.toString("yyyy-MM-dd hh:mm:ss.zzz");

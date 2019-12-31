@@ -76,8 +76,7 @@ CONFIG(debug, debug|release){
 
 }
 
-#ltranslatorJSONQtso is not linked because it's an optional ptr
-LIBS += -lcryptoQtso -lbaseClassQtso -lessentialQtso -ltextQtso
+LIBS += -lcryptoQtso -lbaseClassQtso -lessentialQtso -ltextQtso -ltranslatorJSONQtso
 
 QMAKE_CXXFLAGS_DEBUG -= -g
 QMAKE_CXXFLAGS_DEBUG += -pedantic -Wall -Wextra -g3
