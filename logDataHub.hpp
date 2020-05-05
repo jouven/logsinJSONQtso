@@ -53,6 +53,9 @@ class EXPIMP_LOGSINJSONQTSO logFilter_c
     QString messageContains_pri;
     bool messageContainsSet_pri = false;
 
+    QString referenceContains_pri;
+    bool referenceContainsSet_pri = false;
+
     std::vector<logItem_c::type_ec> types_pri;
     bool typesSet_pri = false;
 
@@ -73,6 +76,9 @@ public:
 
     QString messageContains_f() const;
     void setMessageContains_f(const QString& messageContains_par_con);
+    QString referenceContains_f() const;
+    void setReferenceContains_f(const QString& referenceContains_par_con);
+
     std::vector<logItem_c::type_ec> types_f() const;
     void setTypes_f(const std::vector<logItem_c::type_ec>& types_par_con);
     QDateTime dateTimeFrom_f() const;
@@ -88,6 +94,8 @@ public:
 
     bool messageContainsSet_f() const;
     void unsetMessageContains_f();
+    bool referenceContainsSet_f() const;
+    void unsetReferenceContains_f();
     bool typesSet_f() const;
     void unsetTypes_f();
     bool dateTimeFromSet_f() const;
@@ -102,6 +110,7 @@ public:
     void unsetThreadIdContains_f();
 
     bool anythingSet_f() const;
+
 };
 
 
@@ -146,6 +155,7 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public baseClassQt_c
     uint_fast64_t maxMessages_pri = 100 * 1000;
     uint_fast64_t maxUniqueMessages_pri = 10 * 1000;
     // 1024 * 1024 * 2 = 2MB
+    //it's signed because qt size() functions are signed
     int_fast64_t maxLogFileByteSize_pri = 1024 * 1024 * 2;
 
     //because this class holds all the logs
@@ -200,9 +210,8 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public baseClassQt_c
     //returns true if the message was inserted
     //still will "append" an error if
     //file saving fails
-    bool addMessageInternal_f(
-            const text_c& message_par_con
-            , const logItem_c::type_ec type_par_con
+    bool addMessageInternal_f(const text_c& message_par_con
+            , const QString& reference_par_con, const logItem_c::type_ec type_par_con
             , const QString& sourceFile_par_con
             , const QString& sourceFunction_par_con
             , const int_fast32_t sourceLineNumber_par_con
@@ -225,6 +234,7 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public baseClassQt_c
     bool filterMatch_f(
             const logFilter_c& logFilter_par_con
             , const QString& message_par_con
+            , const QString& reference_par_con
             , const logItem_c::type_ec typeStr_par_con
             , const QDateTime& datetime_par_con
             , const QString& sourceFile_par_con
@@ -251,6 +261,14 @@ public:
     //will "append" an error if file saving fails
     bool addMessage_f(
             const text_c& message_par_con
+            , const logItem_c::type_ec type_par_con
+            , const QString& sourceFile_par_con
+            , const QString& sourceFunction_par_con
+            , const int_fast32_t sourceLineNumber_par_con
+    );
+    bool addMessage_f(
+            const text_c& message_par_con
+            , const QString& reference_par_con
             , const logItem_c::type_ec type_par_con
             , const QString& sourceFile_par_con
             , const QString& sourceFunction_par_con

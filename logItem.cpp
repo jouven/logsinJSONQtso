@@ -30,8 +30,14 @@ void logItem_c::setTranslated_f(const bool translated_par_con)
     message_pri.setTranslated_f(translated_par_con);
 }
 
+QString logItem_c::reference_f() const
+{
+    return reference_pri;
+}
+
 logItem_c::logItem_c(
         const text_c& message_par_con
+        , const QString& reference_par_con
         , const logItem_c::type_ec type_par_con
         //, const QDateTime datetime_par_con
         , const QString& sourceFileName_par_con
@@ -39,6 +45,7 @@ logItem_c::logItem_c(
         , const int_fast32_t sourceLineNumber_par_con
         , const QString& threadId_par_con)
     : message_pri(message_par_con)
+    , reference_pri(reference_par_con)
   , type_pri(type_par_con)
   //, datetime_pri(datetime_par_con)
   , sourceFileName_pri(sourceFileName_par_con)

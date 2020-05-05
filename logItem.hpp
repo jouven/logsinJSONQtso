@@ -15,6 +15,11 @@ class EXPIMP_LOGSINJSONQTSO logItem_c
 {
     //QString message_pri;
     text_c message_pri;
+    //object/ids context, when objects of the same class/structs pass by the same functions/instructions
+    //it's hard to tell which instance of the object is affected by the log message, also this automates adding the ids every time in the "log line"
+    //since they can be added later
+    //not translated, tabs and newlines will be removed when inserting
+    QString reference_pri;
 public:
     enum class type_ec
     {
@@ -48,8 +53,8 @@ public:
     //logItem_c(const QJsonObject& json_par_con);
     logItem_c(
             const text_c& message_par_con
+            , const QString& reference_par_con
             , const type_ec type_par_con
-            //, const QDateTime datetime_par_con
             , const QString& sourceFileName_par_con
             , const QString& sourceFunctionName_par_con
             , const int_fast32_t sourceLineNumber_par_con
@@ -66,6 +71,7 @@ public:
     QString sourceFunctionName_f() const;
     int_fast32_t sourceLineNumber_f() const;
     QString threadId_f() const;
+    QString reference_f() const;
 
     void setTranslated_f(const bool translated_par_con);
 };
