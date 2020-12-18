@@ -277,7 +277,7 @@ bool logDataHub_c::addMessageInternal_f(
 
         if (echoStdoutOnAddMessage_pri)
         {
-            qtOutRef_ext() << "\nMessage: " << message_par_con.rawReplace_f() << '\n'
+            qtStdout_f() << "\nMessage: " << message_par_con.rawReplace_f() << '\n'
                       << "Reference: " << reference_par_con << '\n'
                       << "Type: " << typeStrTmp << '\n'
                       << "DateTime: " << currentDateTimeTmp.toLocalTime().toString("yyyy-MM-dd hh:mm:ss.zzz") << '\n'
@@ -321,7 +321,7 @@ bool logDataHub_c::addMessageInternal_f(
                 }
                 else
                 {
-                    qtErrRef_ext() << "\nDifferent message but same size and same hash, message to insert\n"
+                    qtStderr_f() << "\nDifferent message but same size and same hash, message to insert\n"
                                    << message_par_con.rawReplace_f()
                                    << "\nmessage found\n"
                                    << findHashResultTmp->second.message_f().rawReplace_f() << endl;
@@ -445,7 +445,7 @@ bool logDataHub_c::addMessageInternal_f(
                     appendError_f(errorMsgTmp);
                     if (echoStderrOnError_pri)
                     {
-                        qtErrRef_ext() << errorMsgTmp;
+                        qtStderr_f() << errorMsgTmp;
                     }
                     break;
                 }
@@ -608,7 +608,7 @@ void logDataHub_c::setSaveLogFiles_f(const bool saveLogFiles_par_con)
     }
 }
 
-QString logDataHub_c::logPathBaseName_f() const
+QString logDataHub_c::logSaveDirectoryPath_f() const
 {
     return logSaveDirectoryPath_pri;
 }
@@ -717,11 +717,11 @@ void logDataHub_c::setLogSaveDirectoryPath_f(
         {
             errorTmp = true;
             //append/print error
-            QString errorMsgTmp("\nDirectory " + logSaveDirectoryPathTmp + " doesn't exists");
+            QString errorMsgTmp("Directory " + logSaveDirectoryPathTmp + " doesn't exist");
             appendError_f(errorMsgTmp);
             if (echoStderrOnError_pri)
             {
-                qtErrRef_ext() << errorMsgTmp;
+                qtErrLine_f(errorMsgTmp);
             }
             break;
         }
@@ -759,11 +759,11 @@ void logDataHub_c::setLogSaveDirectoryPath_f(
         {
             errorTmp = true;
             //append/print error
-            QString errorMsgTmp("\nCould not save log entry, file " + currentLogFileNameTmp + " could not be opened");
+            QString errorMsgTmp("Could not save log entry, file " + currentLogFileNameTmp + " could not be opened");
             appendError_f(errorMsgTmp);
             if (echoStderrOnError_pri)
             {
-                qtErrRef_ext() << errorMsgTmp;
+                qtErrLine_f(errorMsgTmp);
             }
         }
         break;

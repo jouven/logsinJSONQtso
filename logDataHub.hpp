@@ -304,7 +304,7 @@ public:
     //unique log entries
     uint_fast64_t uniqueMessageCount_f() const;
 
-    QString logPathBaseName_f() const;
+    QString logSaveDirectoryPath_f() const;
     //logSaveDirectoryPath_par_con is the "directory" path where to save the logs,
     //if empty, the path from where the process was called will be used
     //the log files will be named using QCoreApplication::applicationName()
