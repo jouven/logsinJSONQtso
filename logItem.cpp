@@ -1,25 +1,5 @@
 #include "logItem.hpp"
 
-const QMap<QString, logItem_c::type_ec> logItem_c::strTologTypeMap_pub_sta_con(
-{
-//Keys are lower case because this way when reading from json we can "lower" w/e is
-//there and compare, allowing to ignore case
-    {	"info", logItem_c::type_ec::info}
-    , {	"warning", logItem_c::type_ec::warning}
-    , {	"error", logItem_c::type_ec::error}
-    , {	"debug", logItem_c::type_ec::debug}
-
-});
-
-const std::unordered_map<logItem_c::type_ec, QString> logItem_c::logTypeToStrUMap_pub_sta_con(
-{
-    {	logItem_c::type_ec::info, "info" }
-    , {	logItem_c::type_ec::warning, "warning" }
-    , {	logItem_c::type_ec::error, "error" }
-    , {	logItem_c::type_ec::debug, "debug" }
-
-});
-
 QString logItem_c::threadId_f() const
 {
     return threadId_pri;
@@ -37,23 +17,22 @@ QString logItem_c::reference_f() const
 
 logItem_c::logItem_c(
         const text_c& message_par_con
-        , const QString& reference_par_con
-        , const logItem_c::type_ec type_par_con
+        , QString reference_par
+        , const messageType_ec type_par_con
         //, const QDateTime datetime_par_con
         , const QString& sourceFileName_par_con
         , const QString& sourceFunctionName_par_con
         , const int_fast32_t sourceLineNumber_par_con
         , const QString& threadId_par_con)
     : message_pri(message_par_con)
-    , reference_pri(reference_par_con)
+    , reference_pri(reference_par.remove('\t').remove('\n'))
   , type_pri(type_par_con)
   //, datetime_pri(datetime_par_con)
   , sourceFileName_pri(sourceFileName_par_con)
   , sourceFunctionName_pri(sourceFunctionName_par_con)
   , sourceLineNumber_pri(sourceLineNumber_par_con)
   , threadId_pri(threadId_par_con)
-{
-}
+{}
 
 //void logItem_c::write_f(QJsonObject& json_par) const
 //{
@@ -83,7 +62,7 @@ logItem_c::logItem_c(
 bool logItem_c::isValid_f() const
 {
     return not message_pri.empty_f()
-            and type_pri not_eq type_ec::empty
+            and type_pri not_eq messageType_ec::empty
     //        and not datetime_pri.isNull()
             and not sourceFileName_pri.isEmpty()
             and not sourceFunctionName_pri.isEmpty()
@@ -95,7 +74,7 @@ text_c logItem_c::message_f() const
     return message_pri;
 }
 
-logItem_c::type_ec logItem_c::type_f() const
+messageType_ec logItem_c::type_f() const
 {
     return type_pri;
 }

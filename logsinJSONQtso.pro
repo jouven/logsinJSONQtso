@@ -1,7 +1,6 @@
 #message($$QMAKESPEC)
 QT -= gui
 
-TARGET = logsinJSONQtso
 TEMPLATE = lib
 
 !android:QMAKE_CXXFLAGS += -std=c++17
@@ -76,7 +75,7 @@ CONFIG(debug, debug|release){
 
 }
 
-LIBS += -lcryptoQtso -lbaseClassQtso -lessentialQtso -ltextQtso -ltranslatorJSONQtso
+LIBS += -lcryptoQtso -lbaseClassQtso -lessentialQtso -ltextQtso
 
 QMAKE_CXXFLAGS_DEBUG -= -g
 QMAKE_CXXFLAGS_DEBUG += -pedantic -Wall -Wextra -g3

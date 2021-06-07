@@ -5,6 +5,7 @@
 #include "crossPlatformMacros.hpp"
 
 #include "textQtso/text.hpp"
+#include "essentialQtso/enumClass.hpp"
 
 #include <QString>
 #include <QMap>
@@ -20,22 +21,8 @@ class EXPIMP_LOGSINJSONQTSO logItem_c
     //since they can be added later
     //not translated, tabs and newlines will be removed when inserting
     QString reference_pri;
-public:
-    enum class type_ec
-    {
-        empty
-        , info
-        , warning
-        , error
-        , debug
-    };
 
-    //keys are lower case
-    static EXPIMP_LOGSINJSONQTSO const QMap<QString, type_ec> strTologTypeMap_pub_sta_con;
-    //values are camelcase
-    static EXPIMP_LOGSINJSONQTSO const std::unordered_map<type_ec, QString> logTypeToStrUMap_pub_sta_con;
-private:
-    type_ec type_pri = type_ec::empty;
+    messageType_ec type_pri = messageType_ec::empty;
 
     //DON'T USE THIS,
     //it makes log entries in different indexes have the same time
@@ -51,10 +38,9 @@ private:
 public:
     logItem_c() = default;
     //logItem_c(const QJsonObject& json_par_con);
-    logItem_c(
-            const text_c& message_par_con
-            , const QString& reference_par_con
-            , const type_ec type_par_con
+    logItem_c(const text_c& message_par_con
+            , QString reference_par
+            , const messageType_ec type_par_con
             , const QString& sourceFileName_par_con
             , const QString& sourceFunctionName_par_con
             , const int_fast32_t sourceLineNumber_par_con
@@ -65,7 +51,7 @@ public:
     bool isValid_f() const;
 
     text_c message_f() const;
-    type_ec type_f() const;
+    messageType_ec type_f() const;
     //QDateTime datetime_f() const;
     QString sourceFileName_f() const;
     QString sourceFunctionName_f() const;

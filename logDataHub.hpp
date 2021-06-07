@@ -18,8 +18,15 @@
 
 //all the functions that modify the containers where
 //log objects are saved are thread safe,
-//AKA inserting logs from different threads is fine,
+//AKA inserting/deleting logs from different threads is fine,
 //everything else... probably not
+
+//20210217 regarding translations the log library won't translate anything
+//the only translation related functionality is text_c which can hint if a log message is already translated or not
+//translations should be done when outputing (in a program) or just grabbing the log entries and translating them, then they can be saved, translated, separately
+//still messages can be translated just before inserting the log entry
+//the only point of no return is when log entries are saved in a file, because of the value replacing, the message placeholders are replaced with the values
+//that were a separate element until then, this creates an alternate message to translate
 
 #ifndef LOGSINJSONQTSO_LOGDATAHUB_HPP
 #define LOGSINJSONQTSO_LOGDATAHUB_HPP
@@ -46,8 +53,6 @@
 #define MACRO_FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 #define MACRO_ADDMESSAGE(VAR, MESSAGE, TYPE) VAR.addMessage_f(MESSAGE, TYPE, MACRO_FILENAME, __func__, __LINE__)
 
-class translator_c;
-
 class EXPIMP_LOGSINJSONQTSO logFilter_c
 {
     QString messageContains_pri;
@@ -56,7 +61,7 @@ class EXPIMP_LOGSINJSONQTSO logFilter_c
     QString referenceContains_pri;
     bool referenceContainsSet_pri = false;
 
-    std::vector<logItem_c::type_ec> types_pri;
+    std::vector<messageType_ec> types_pri;
     bool typesSet_pri = false;
 
     QDateTime dateTimeFrom_pri;
@@ -79,8 +84,8 @@ public:
     QString referenceContains_f() const;
     void setReferenceContains_f(const QString& referenceContains_par_con);
 
-    std::vector<logItem_c::type_ec> types_f() const;
-    void setTypes_f(const std::vector<logItem_c::type_ec>& types_par_con);
+    std::vector<messageType_ec> types_f() const;
+    void setTypes_f(const std::vector<messageType_ec>& types_par_con);
     QDateTime dateTimeFrom_f() const;
     void setDatetimeFrom_f(const QDateTime& dateTimeFrom_par_con);
     QDateTime dateTimeTo_f() const;
@@ -110,7 +115,6 @@ public:
     void unsetThreadIdContains_f();
 
     bool anythingSet_f() const;
-
 };
 
 
@@ -146,60 +150,66 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public baseClassQt_c
     //but as of 20191227 there is no case of the same text repeating a lot but with different replacement values, also no big replacement values in general
 
     bool loggingEnabled_pri = true;
-    bool echoStdoutOnAddMessage_pri = false;
-    bool echoStderrOnError_pri = false;
+    //bool echoStdoutOnAddMessage_pri = false;
+    //bool echoStderrOnError_pri = false;
 
     QMutex addMessageMutex_pri;
     QTimer saveFileFlushDebounce_pri;
 
+    //memory log limits, I know this is not the appropiate solution because it doesn't measure how much is inside the containers
     uint_fast64_t maxMessages_pri = 100 * 1000;
     uint_fast64_t maxUniqueMessages_pri = 10 * 1000;
-    // 1024 * 1024 * 2 = 2MB
+    //file size limit 1024 * 1024 * 2 = 2MB
     //it's signed because qt size() functions are signed
     int_fast64_t maxLogFileByteSize_pri = 1024 * 1024 * 2;
 
-    //because this class holds all the logs
-    //when saving log files, not all the log items are saved
-    //this has the starting index for the current log file
-    //and when the files changes, this index changes too
-    QMap<int_fast64_t, std::pair<logItem_c*, QDateTime>>::ConstIterator startLogIteratorToSave_pri;
-    bool startLogIteratorToSaveSet_pri = false;
+    //this only applies for json logging
+    //unlike text log, JSON log has a file saving issue, when the memory log is partially cleared because it has hit the limit (or fully cleared)
+    //the log file must be rotated too because the "old" logs can't be saved anymore because json saving works replacing all the current logs in the current log file
+    //and that would remove the old ones on the next save after, same situation when the file log size limit is reached but in this case it would duplicate logs on the new file,
+    //so an extra variable index must be used to point to an index from where the logs will be "written from"
+    int_fast64_t currentIndexToSaveFrom_pri = 0;
 
-    //clear the log containers when:
-    //the maxMessage amount is reached
-    bool clearWhenMaxMessages_pri = false;
-    //the maxUniqueMessage amount is reached
-    bool clearWhenMaxUniqueMessages_pri = false;
-    //same time as the log file is "rotated" (saveLogFiles_pri must be true)
-    bool clearWhenMaxLogFileSize_pri = false;
+    //the log containers are cleared when the maxMessage / maxUniqueMessages is reached
+    //this below makes the clear partial instead total to leave some context
+    bool partialClearWhenMaxMessages_pri = false;
+    bool partialClearWhenMaxUniqueMessages_pri = false;
+
+    //rotate log file when maxLogFileByteSize_pri is reached (saveLogFiles_pri must be true)
+    bool rotateWhenMaxLogFileSize_pri = false;
 
     QString logSaveDirectoryPath_pri;
     bool isValidLogPathBaseName_pri = false;
-    //if logSaveDirectoryPath_pri is not set and valid it won't save
+    //logSaveDirectoryPath_pri must set and valid to really save
     bool saveLogFiles_pri = false;
-
+    //current log base filename, default it executable name
+    QString logBaseFilename_pri;
+    //current log filename, this is basename + datetime + extension
     QString currentLogFileName_pri;
+
 
     //"yyyyMMdd_hhmmsszzz" for maximum time precission
     QString logFileDatetimeFormat_pri = "yyyyMMdd";
     QString currentDateTimeValue_pri;
 
     //log types to log, all by default
-    std::unordered_set<logItem_c::type_ec> logTypesToSave_pri =
+    std::unordered_set<messageType_ec> logTypesToSave_pri =
     {
-        logItem_c::type_ec::debug
-        , logItem_c::type_ec::error
-        , logItem_c::type_ec::warning
-        , logItem_c::type_ec::info
+        messageType_ec::debug
+        , messageType_ec::error
+        , messageType_ec::warning
+        , messageType_ec::information
+        , messageType_ec::question
     };
 
     //log types to file save, all by default, above setting limits this one too
-    std::unordered_set<logItem_c::type_ec> logTypesToSaveFile_pri =
+    std::unordered_set<messageType_ec> logTypesToSaveFile_pri =
     {
-        logItem_c::type_ec::debug
-        , logItem_c::type_ec::error
-        , logItem_c::type_ec::warning
-        , logItem_c::type_ec::info
+        messageType_ec::debug
+        , messageType_ec::error
+        , messageType_ec::warning
+        , messageType_ec::information
+        , messageType_ec::question
     };
 
     //file save log type, true is text, one log entry per line, false is json type
@@ -211,7 +221,8 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public baseClassQt_c
     //still will "append" an error if
     //file saving fails
     bool addMessageInternal_f(const text_c& message_par_con
-            , const QString& reference_par_con, const logItem_c::type_ec type_par_con
+            , const QString& reference_par_con
+            , const messageType_ec type_par_con
             , const QString& sourceFile_par_con
             , const QString& sourceFunction_par_con
             , const int_fast32_t sourceLineNumber_par_con
@@ -235,7 +246,7 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public baseClassQt_c
             const logFilter_c& logFilter_par_con
             , const QString& message_par_con
             , const QString& reference_par_con
-            , const logItem_c::type_ec typeStr_par_con
+            , const messageType_ec typeStr_par_con
             , const QDateTime& datetime_par_con
             , const QString& sourceFile_par_con
             , const QString& sourceFunction_par_con
@@ -250,18 +261,23 @@ class EXPIMP_LOGSINJSONQTSO logDataHub_c : public QObject, public baseClassQt_c
 
     //if a translator ptr is set, log entries will be translated when written in the log file/s
     //also filtering will be done against the translations
-    translator_c* translator_pri = nullptr;
+    //translator_c* translator_pri = nullptr;
+
+    //when the containers reach the maxMessage limits this functions clears them partially
+    //so there is at least some logs left as a possible context
+    void partialMemoryLogClear_f();
+
 public:
     //no translation errors are reported
     //care must be taken that the translator_c object pointed by translatorPtr_par
     //has its config properly set
-    logDataHub_c(translator_c* translatorPtr_par);
+    logDataHub_c();
 
     //returns true if the message was inserted
     //will "append" an error if file saving fails
     bool addMessage_f(
             const text_c& message_par_con
-            , const logItem_c::type_ec type_par_con
+            , const messageType_ec type_par_con
             , const QString& sourceFile_par_con
             , const QString& sourceFunction_par_con
             , const int_fast32_t sourceLineNumber_par_con
@@ -269,7 +285,15 @@ public:
     bool addMessage_f(
             const text_c& message_par_con
             , const QString& reference_par_con
-            , const logItem_c::type_ec type_par_con
+            , const messageType_ec type_par_con
+            , const QString& sourceFile_par_con
+            , const QString& sourceFunction_par_con
+            , const int_fast32_t sourceLineNumber_par_con
+    );
+    std::vector<bool> addMessage_f(
+            const textCompilation_c& message_par_con
+            , const QString& reference_par_con
+            , const messageType_ec type_par_con
             , const QString& sourceFile_par_con
             , const QString& sourceFunction_par_con
             , const int_fast32_t sourceLineNumber_par_con
@@ -288,6 +312,7 @@ public:
     //removes all log messages from this class log containers,
     //log files aren't affected BUT it will "rotate" the current log filename
     //(otherwise it would replace the current log file the first message after the clear, losing the previous entries)
+    //thread-safe
     void clearLogs_f();
 
     //because some infinite loop might happen on any program having logs, stop logging after certain number of messages
@@ -305,16 +330,21 @@ public:
     uint_fast64_t uniqueMessageCount_f() const;
 
     QString logSaveDirectoryPath_f() const;
-    //logSaveDirectoryPath_par_con is the "directory" path where to save the logs,
-    //if empty, the path from where the process was called will be used
-    //the log files will be named using QCoreApplication::applicationName()
-    //if QCoreApplication::applicationName() returns "appA" -> "*logSaveDirectoryPath_par_con*/appA_%date%_%time%_UTC.log"
+
+    //IMPORTANT to save log files setLogSaveDirectoryPath_f or loadLogFiles_f must be called first
+
+    //logSaveDirectoryPath_par_con is a "directory" path where to save the logs,
+    //if empty the path from where the process was called will be used
+    //the log files will be named using logBaseFilename_par_con or
+    //if it's null, the executable name, i.e., logBaseFilename_par_con = "test" -> "*logSaveDirectoryPath_par_con*/test_%date%_%time%_UTC.log"
+    //for executable name "appA" -> "*logSaveDirectoryPath_par_con*/appA_%date%_%time%_UTC.log"
     //when a log file reaches a certain size (see maxLogFileSize_f)
     //a new one will be created
     //will "append" an error if the file already exists
     //or can't open-write the "new" file
     void setLogSaveDirectoryPath_f(
             const QString& logSaveDirectoryPath_par_con = QString()
+            , const QString& logBaseFilename_par_con = QString()
             , const bool keepOldLogPathOnError_par_con = false
     );
     bool isValidLogPathBaseName_f() const;
@@ -327,18 +357,28 @@ public:
     void setMaxLogFileByteSize_f(const int_fast64_t maxLogFileByteSize_par_con);
 
     //loads a previously saved log file/s
-    //this can be a single file or a "baseName", "basename" will load all the files with the same basename
-    //if logPathBaseName_par_con is empty, applicationName will be used
+    //logFilePath_par_con can be a single file path or a partial file path name which will load all the files that match the partial
+    //if logFilePath_par_con is empty, executableName will be used
     //keepUsingLastLogFile_par_con will set logSaveDirectoryPath to the loaded file/s directory
-    //returns true if logs were loaded
+    //returns true if any log entries were loaded
     //writing log lines to a file is disabled while loading the log file/s
     //WARNING duplicates can be inserted this way, because loaded logs are appended, they won't replace existing indexes,
     //even if the index order doesn't make sense chronologically
     bool loadLogFiles_f(
-            const QString& logPathBaseName_par_con = QString()
+            const QString& logFilePath_par_con = QString()
             , const logFilter_c& logFilter_par_con = logFilter_c()
+            //log files need to be properly sorted, by name, for this to work
             , const bool onlyLoadLastLogFile_par_con = false
-            , const bool keepUsingLastLogFile_par_con = false
+            //append an error if no log file to load is found
+            , const bool keepUsingLoadedLogFilePath_par_con = true
+            , const bool errorWhenNoneFound_par_con = false
+    );
+
+    //creates a new log file in the logFilePath, stops using the current log file path
+    //won't replace/use existing files
+    bool changeLogFilePath_f(
+            const QString& logFilePath_par_con
+            , const bool createParentDirectories_par_con = true
     );
 
     QString currentLogFileName_f() const;
@@ -348,35 +388,33 @@ public:
     //use if logging is slow in certain code sections
     void setLoggingEnabled_f(const bool loggingEnabled_par_con);
 
-    std::unordered_set<logItem_c::type_ec> logTypesToSave_f() const;
-    void setLogTypesToSave_f(const std::unordered_set<logItem_c::type_ec>& logTypesToSave_par_con);
+    std::unordered_set<messageType_ec> logTypesToSave_f() const;
+    void setLogTypesToSave_f(const std::unordered_set<messageType_ec>& logTypesToSave_par_con);
 
-    std::unordered_set<logItem_c::type_ec> logTypesToSaveFile_f() const;
-    void setLogTypesToSaveFile_f(const std::unordered_set<logItem_c::type_ec>& logTypesToSaveFile_par_con);
+    std::unordered_set<messageType_ec> logTypesToSaveFile_f() const;
+    void setLogTypesToSaveFile_f(const std::unordered_set<messageType_ec>& logTypesToSaveFile_par_con);
 
     QString logFileDatetimeFormat_f() const;
     //this applies the next time a log file is "rotated" or when setting the log files save directory
     void setLogFileDatetimeFormat_f(const QString& logFileDatetimeFormat_par_con);
 
-    bool clearWhenMaxMessages_f() const;
-    void setClearWhenMaxMessages_f(const bool clearWhenMaxMessages_ar_con);
+    bool partialClearWhenMaxMessages_f() const;
+    void setPartialClearWhenMaxMessages_f(const bool partialClearWhenMaxMessages_par_con);
 
-    bool clearWhenMaxUniqueMessages_f() const;
-    void setClearWhenMaxUniqueMessages_f(const bool clearWhenMaxUniqueMessages_par_con);
+    bool partialClearWhenMaxUniqueMessages_f() const;
+    void setClearWhenMaxUniqueMessages_f(const bool partialClearWhenMaxUniqueMessages_par_con);
 
-    bool clearWhenMaxLogFileSize_f() const;
+    bool rotateWhenMaxLogFileSize_f() const;
     //will only work is saveLogFiles = true
-    void setClearWhenMaxLogFileSize_f(const bool clearWhenMaxLogFileSize_par_con);
+    void setRotateWhenMaxLogFileSize_f(const bool rotateWhenMaxLogFileSize_par_con);
 
     bool fileSaveLogTypeText_f() const;
     //true for text logs (1 log entry = 1 text line), false for json
     void setFileSaveLogTypeText_f(const bool fileSaveLogTypeText_par_con);
 
-    translator_c* translatorPtr_f() const;
-    //no translation errors are reported
-    //care must be taken that the translator_c object pointed by translatorPtr_par
-    //has its config properly set
-    void setTranslatorPtr_f(translator_c* translatorPtr_par);
+    //translator_c* translatorPtr_f() const;
+    //will translate errors if set to a translator object
+    //void setTranslatorPtr_f(translator_c* translatorPtr_par);
 Q_SIGNALS:
     //using an int because QMap size is as int
     void messageAdded_signal(const int index_par_con, const logItem_c* logItem_par_con, const QDateTime* datetime_par_con);
